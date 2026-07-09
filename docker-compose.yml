@@ -1,0 +1,18 @@
+services:
+  backup-service:
+    image: fluttered/dockbare:latest
+    container_name: docker-volume-backup
+    ports:
+      - "127.0.0.1:5000:5000"
+
+    networks:
+      - proxy-network
+    volumes:
+      - ./backups:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - BACKUP_HOST_DIR=${PWD}/backups
+
+networks:
+  proxy-network:
+    external: true

@@ -1,0 +1,12 @@
+services:
+  backup-service:
+    image: fluttered/dockbare:latest
+    container_name: dockbare
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./backups:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - BACKUP_HOST_DIR=${PWD}/backups
+    restart: unless-stopped

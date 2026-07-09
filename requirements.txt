@@ -1,0 +1,6 @@
+flask
+apscheduler
+schedule
+requests
+paramiko
+django
