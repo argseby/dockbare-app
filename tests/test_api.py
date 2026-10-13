@@ -218,3 +218,11 @@ def test_notification_settings_from_env(settings, fake_docker, monkeypatch):
         assert "env-secret" not in (core.db.get_setting("notifications") and str(core.db.get_setting("notifications")) or "")
     finally:
         app.extensions["dockbare"].stop()
+
+
+def test_totp_qr_endpoint(auth_client, app):
+    assert auth_client.get("/api/security/totp-qr").status_code == 404
+    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    r = auth_client.get("/api/security/totp-qr")
+    assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"<svg" in r.data
+    assert app.test_client().get("/api/security/totp-qr").status_code == 401

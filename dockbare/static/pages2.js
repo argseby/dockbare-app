@@ -354,8 +354,8 @@ async function renderSecurity(c, s) {
   c.innerHTML = `<div class="grid cols-2">
     <div class="stack">
       <div class="card"><div class="card-h"><h2>${icon("shield-check")} Protection</h2></div><div class="card-c"><dl class="kv">
-        <dt>Admin user</dt><dd><code>${esc(st.admin_user)}</code></dd>
-        <dt>Two-factor (TOTP)</dt><dd>${sec.totp.enabled ? `<span class="badge ok">enabled</span>` : `<span class="badge warn">off</span> <span class="muted small">run <code>python -m dockbare totp-setup</code></span>`}</dd>
+        <dt>Admin user</dt><dd><code>${esc(st.admin_user)}</code>${sec.weak_password ? ` <span class="badge danger">${icon("shield-alert", "sm")} weak password: ${esc(sec.weak_password)}</span>` : ` <span class="badge ok">${icon("shield-check", "sm")} password ok</span>`}</dd>
+        <dt>Two-factor (TOTP)</dt><dd>${sec.totp.enabled ? `<span class="badge ok">${icon("shield-check", "sm")} enabled</span> <button class="btn btn-sm" data-action="totpQr">${icon("eye")} Show QR for another device</button>` : `<span class="badge warn">off</span> <span class="muted small">run <code>docker exec -it dockbare python -m dockbare totp-setup</code>, add the printed secret to the environment, restart</span>`}</dd>
         <dt>Login throttling</dt><dd>lockout after ${st.login_max_attempts} failures within ${st.login_window_minutes} min, escalating up to 1 h</dd>
         <dt>Session</dt><dd>expires after ${Math.round(st.session_idle_minutes / 60)} h idle, max ${Math.round(st.session_max_hours / 24)} days</dd>
         <dt>Cookies</dt><dd>HttpOnly · SameSite=Strict · Secure ${esc(st.secure_cookies)}${st.behind_proxy ? " · proxy headers trusted" : ""}</dd>
@@ -367,6 +367,7 @@ async function renderSecurity(c, s) {
     <div class="card"><div class="card-h"><h2>Active sessions</h2><div class="actions"><button class="btn btn-sm btn-danger-ghost" data-action="revokeAll">${icon("log-out")} Sign out other sessions</button></div></div><div class="card-c tight"><div class="table-wrap"><table><thead><tr><th>Started</th><th>Last seen</th><th>IP</th><th>Client</th><th></th></tr></thead><tbody>
       ${sec.sessions.map((x) => `<tr><td class="nowrap">${esc(fmtTime(x.created_at))}</td><td class="nowrap">${esc(ago(x.last_seen))}</td><td class="mono">${esc(x.ip)}</td><td class="small ellipsis" title="${esc(x.user_agent)}">${esc((x.user_agent || "").slice(0, 40))}${x.current ? ` <span class="badge info">this</span>` : ""}</td><td><div class="actions">${x.current ? "" : `<button class="btn btn-sm btn-ghost btn-icon" data-action="revoke" data-id="${esc(x.id)}" title="Revoke">${icon("x")}</button>`}</div></td></tr>`).join("")}</tbody></table></div></div></div></div>`;
   bind(c, {
+    totpQr: () => { modal({ title: "Authenticator QR code", body: `<p class="small muted">Scan with Google Authenticator, Aegis, Bitwarden, 1Password… Anyone who sees this code can generate your login codes.</p><div class="center"><img src="/api/security/totp-qr?t=${Date.now()}" alt="TOTP QR code" width="260" height="260"></div>`, footer: `<button class="btn" data-close>Close</button>` }); },
     revokeAll: async (b) => { const r = await api.del("/api/security/sessions"); toast(`${r.revoked} session(s) revoked`, "success"); renderSecurity(c, s); },
     revoke: async (b) => { await api.del(`/api/security/sessions/${b.dataset.id}`); renderSecurity(c, s); },
   });

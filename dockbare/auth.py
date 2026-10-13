@@ -15,6 +15,9 @@ from .db import Database, rows_to_dicts
 log = logging.getLogger("dockbare.auth")
 
 COOKIE_NAME = "dockbare_session"
+WEAK_PASSWORDS = {"password", "admin", "dockbare", "changeme", "change-me", "secret", "letmein", "backup", "123456", "12345678",
+                  "qwerty", "admin123", "password1", "change-me-to-a-long-random-password"}
+GLOBAL_FAILURE_LIMIT = 30  # failures from all IPs within the window before every attempt is slowed down
 CSRF_HEADER = "X-Requested-With"
 CSRF_VALUE = "Dockbare"
 
@@ -33,10 +36,20 @@ class Auth:
         self._event = on_event or (lambda *a, **k: None)
         self._notify = notify or (lambda *a, **k: None)
         self._hash: str | None = None
+        self.weak_password: str | None = None
         if settings.admin_password_hash:
             self._hash = settings.admin_password_hash
         elif settings.admin_password:
             self._hash = generate_password_hash(settings.admin_password, method="scrypt")
+            pw = settings.admin_password
+            if pw.lower() in WEAK_PASSWORDS or pw.lower() == settings.admin_user.lower():
+                self.weak_password = "the admin password is a common default"
+            elif len(pw) < 12:
+                self.weak_password = "the admin password is shorter than 12 characters"
+            elif len(set(pw)) < 5:
+                self.weak_password = "the admin password has too little variety"
+            if self.weak_password:
+                log.warning("SECURITY: %s. Set a long random DOCKBARE_ADMIN_PASSWORD (python -m dockbare gen-secret).", self.weak_password)
         self._dummy_hash = generate_password_hash(secrets.token_hex(16), method="scrypt")
         self._totp = None
         if settings.totp_secret:
@@ -67,6 +80,10 @@ class Auth:
     def _record(self, ip: str, username: str, success: bool) -> None:
         self.db.execute("INSERT INTO login_attempts(ts, ip, username, success) VALUES(?,?,?,?)", (time.time(), ip, username[:64], int(success)))
 
+    def global_failures(self) -> int:
+        window = time.time() - self.settings.login_window_minutes * 60
+        return int(self.db.one("SELECT COUNT(*) AS n FROM login_attempts WHERE success=0 AND ts>=?", (window,))["n"])
+
     # ------------------------------------------------------------------- login
     def login(self, username: str, password: str, totp_code: str | None, ip: str, user_agent: str) -> str:
         if not self.configured:
@@ -75,17 +92,26 @@ class Auth:
         if locked_until:
             wait = int(locked_until - time.time()) + 1
             raise AuthError(f"Too many failed attempts. Try again in {wait} seconds.", 429, retry_after=wait)
+        global_fail = self.global_failures()
+        if global_fail >= GLOBAL_FAILURE_LIMIT:
+            # Distributed guessing: slow every attempt down (no lockout, so the admin can still get in).
+            time.sleep(min(5.0, 0.5 * (1 + (global_fail - GLOBAL_FAILURE_LIMIT) // 10)))
         ok_user = hmac.compare_digest(username.encode("utf-8"), self.settings.admin_user.encode("utf-8"))
         # Always run the hash check so timing is identical for unknown users.
         ok_pass = check_password_hash(self._hash if ok_user else self._dummy_hash, password or "")
         ok = ok_user and ok_pass
         if ok and self._totp is not None:
             code = (totp_code or "").replace(" ", "")
+            last = self.db.get_setting("totp_last_used") or {}
             if not (code.isdigit() and self._totp.verify(code, valid_window=1)):
                 ok = False
                 reason = "invalid one-time code"
+            elif last.get("code") == code and time.time() - float(last.get("ts") or 0) < 120:
+                ok = False
+                reason = "one-time code already used"  # replay within the validity window
             else:
                 reason = ""
+                self.db.set_setting("totp_last_used", {"code": code, "ts": time.time()})
         else:
             reason = "invalid credentials"
         if not ok:

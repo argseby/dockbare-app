@@ -473,6 +473,7 @@ def security():
         "this_ip": {"ip": request.remote_addr, "failures": failures, "locked_until": locked_until},
         "settings": {k: v for k, v in c.settings.public_dict().items() if k.startswith(("session", "login", "behind", "secure", "admin", "totp", "generated"))},
         "totp": {"enabled": c.auth.totp_enabled},
+        "weak_password": c.auth.weak_password,
     })
 
 
@@ -499,6 +500,7 @@ def peer_status():
     token = auth[7:].strip() if auth.startswith("Bearer ") else None
     if not c.peers.verify_token(token):
         log.warning("Rejected peer status request from %s", request.remote_addr)
+        time.sleep(0.5)
         return err("Invalid peer token.", 401)
     return jsonify(c.peers.self_status())
 
@@ -678,3 +680,23 @@ def uptime_announcement_update_delete(aid, uid):
 def uptime_announcement_update_edit(aid, uid):
     data = body()
     return jsonify(core().uptime.edit_update(aid, uid, data.get("message"), data.get("status") or None))
+
+
+@api.get("/security/totp-qr")
+def totp_qr():
+    """SVG QR code of the configured TOTP secret (for adding another authenticator device)."""
+    c = core()
+    if not c.settings.totp_secret:
+        return err("TOTP is not configured (DOCKBARE_TOTP_SECRET).", 404)
+    import io
+
+    import pyotp
+    import qrcode
+    import qrcode.image.svg
+
+    uri = pyotp.TOTP(c.settings.totp_secret.replace(" ", "").upper()).provisioning_uri(name=c.settings.admin_user, issuer_name="Dockbare")
+    img = qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    c.manager.event("warning", "auth.totp_qr", "TOTP QR code displayed")
+    return Response(buf.getvalue(), mimetype="image/svg+xml", headers={"Cache-Control": "no-store"})
