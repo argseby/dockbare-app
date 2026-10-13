@@ -17,7 +17,7 @@ VOLUME ["/data", "/backups"]
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=4).status == 200 else 1)"
+  CMD python -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('DOCKBARE_PORT','5000'), timeout=4).status == 200 else 1)"
 
 # The image doubles as the helper image that mounts volumes for backup/restore,
 # so no extra image has to be pulled on the host.
