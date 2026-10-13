@@ -55,16 +55,19 @@ And **keep `DOCKBARE_ENCRYPTION_KEY` somewhere safe**; without it the encrypted 
 
 ### Portainer
 
-Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as the compose path of a git stack. It
-reads everything from the stack's *Environment variables* (Portainer writes them to `stack.env`): the app
-settings from `.env.example` plus `PROXY_NETWORK` (your reverse-proxy network) and `DOCKBARE_HOST` (for
-the Traefik labels). Data and archives go into the named Docker volumes `dockbare_data` and
-`dockbare_backups`, which survive every stack update. (Never use relative `./data` paths in a git stack:
-each update checks out into a new directory and the database would start empty; the dashboard warns
-when that happens.) To keep the archives in a host directory instead, replace the two volume lines with
-absolute paths. Portainer builds the image from the repository on every stack update
-(`pull_policy: build`); leave Portainer's "re-pull image" option off, there is nothing to pull.
-`/api/health` shows the `build` fingerprint so you can see which version is actually running.
+Create a git stack pointing at this repository and put the settings from `.env.example` into the
+stack's *Environment variables* (Portainer writes them to `stack.env`, which both compose files read).
+Set `PROXY_NETWORK` to your reverse-proxy network and `DOCKBARE_PORT` if 5000 is taken.
+[docker-compose.yml](docker-compose.yml) publishes the port for a reverse proxy such as Nginx Proxy
+Manager; [docker-compose.portainer.yml](docker-compose.portainer.yml) carries Traefik labels instead.
+
+Both keep the database and the archives in the Docker volumes `dockbare_data` and `dockbare_backups`,
+which survive every stack update. Never point `DOCKBARE_DATA_PATH` at a relative `./data` in a git
+stack: Portainer checks each update out into a new directory and the database would start empty
+(remotes, schedules, 2FA gone; the dashboard warns when that happens). Absolute host paths are fine.
+Portainer builds the image from the repository on every stack update (`pull_policy: build`); leave
+Portainer's "re-pull image" option off, there is nothing to pull. `/api/health` shows the `build`
+fingerprint so you can see which version is actually running.
 
 ## `.env`
 

@@ -1166,7 +1166,7 @@ class Manager:
         out = []
         first = self.db.get_setting("first_start_at")
         if first and time.time() - float(first) < 7 * 86400 and not self.list_remotes() and not self.list_schedules():
-            out.append(f"This database was created {time.strftime('%Y-%m-%d %H:%M', time.localtime(float(first)))} and is empty. If you had configuration before, the /data mount changed (Portainer: use absolute host paths for DOCKBARE_DATA_PATH and DOCKBARE_BACKUPS_PATH). Restore it via Recovery → configuration snapshot.")
+            out.append(f"This database was created {time.strftime('%Y-%m-%d %H:%M', time.localtime(float(first)))} and is empty. If you had configuration before, the /data mount changed (a relative ./data in a Portainer git stack is a new empty directory after every update; keep it in the dockbare_data Docker volume or an absolute host path). Restore everything, including 2FA, via Recovery → configuration snapshot.")
         auth = getattr(self, "auth", None)
         if auth is not None and getattr(auth, "weak_password", None):
             out.append(f"Weak admin login: {auth.weak_password}. Set a long random DOCKBARE_ADMIN_PASSWORD.")

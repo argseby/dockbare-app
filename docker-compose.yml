@@ -16,11 +16,12 @@ services:
       # (127.0.0.1 = only via a reverse proxy on this machine, 0.0.0.0 = exposed directly).
       - "${DOCKBARE_BIND:-127.0.0.1}:${DOCKBARE_PORT:-5000}:${DOCKBARE_PORT:-5000}"
     volumes:
-      # Portainer git stacks: SET THESE TO ABSOLUTE HOST PATHS (DOCKBARE_BACKUPS_PATH / DOCKBARE_DATA_PATH).
-      # A relative ./data lives inside the git checkout, which is a new directory on every update,
-      # so the database (remotes, schedules, 2FA, monitors) would start empty after each redeploy.
-      - ${DOCKBARE_BACKUPS_PATH:-./backups}:/backups
-      - ${DOCKBARE_DATA_PATH:-./data}:/data
+      # Named Docker volumes by default (dockbare_data / dockbare_backups). They survive every redeploy,
+      # including Portainer git-stack updates, which check out the repo into a NEW directory each time
+      # (a relative ./data would start empty after every update: remotes, schedules, 2FA all gone).
+      # Prefer host directories? Set DOCKBARE_BACKUPS_PATH / DOCKBARE_DATA_PATH to ABSOLUTE paths.
+      - ${DOCKBARE_BACKUPS_PATH:-dockbare_backups}:/backups
+      - ${DOCKBARE_DATA_PATH:-dockbare_data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=${TZ:-UTC}
@@ -33,3 +34,15 @@ networks:
   proxy:
     external: true
     name: ${PROXY_NETWORK:-bridge}
+
+volumes:
+  # Fixed names (not prefixed with the project/stack name) so the data is easy to find and reuse.
+  # Unused when DOCKBARE_*_PATH point at host directories.
+  dockbare_data:
+    name: ${DOCKBARE_DATA_VOLUME:-dockbare_data}
+    labels:
+      dev.dockbare.internal: "1"
+  dockbare_backups:
+    name: ${DOCKBARE_BACKUPS_VOLUME:-dockbare_backups}
+    labels:
+      dev.dockbare.internal: "1"
