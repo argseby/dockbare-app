@@ -1,0 +1,19 @@
+[project]
+name = "dockbare"
+version = "3.0.0"
+description = "Docker volume backup with encryption, multi-remote mirroring, recovery mode and reports"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["dockbare", "dockbare.remotes"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+dockbare = ["static/*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,18 +1,17 @@
 services:
-  backup-service:
+  dockbare:
     image: fluttered/dockbare:latest
-    container_name: docker-volume-backup
+    build: .
+    container_name: dockbare
+    restart: unless-stopped
+    env_file: .env          # Portainer git stacks: use "env_file: stack.env" and the stack's environment variables
     ports:
+      # Bind to localhost and put a TLS reverse proxy (Traefik, Caddy, nginx) in front.
+      # Change to "5000:5000" only if you really want to expose it directly.
       - "127.0.0.1:5000:5000"
-
-    networks:
-      - proxy-network
     volumes:
-      - ./backups:/backups
+      - ./backups:/backups    # use absolute host paths under Portainer
+      - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - BACKUP_HOST_DIR=${PWD}/backups
-
-networks:
-  proxy-network:
-    external: true
+      - TZ=${TZ:-UTC}

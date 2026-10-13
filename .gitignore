@@ -1,0 +1,27 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+
+# local dev state
+.venv/
+.dev/
+.claude/
+backups/
+data/
+*.log
+*.part
+*.migrated
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store

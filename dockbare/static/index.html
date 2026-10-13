@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Dockbare</title>
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="app">
+  <div class="backdrop-nav"></div>
+  <aside class="sidebar">
+    <div class="brand"><img src="/static/logo.svg" alt=""><span class="name">Dockbare</span><span class="ver" id="brand-version"></span></div>
+    <nav class="nav"></nav>
+    <div class="sidebar-foot">
+      <button id="theme-btn" type="button">Theme</button>
+      <button id="logout-btn" type="button"><svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg> <span class="lbl">Sign out</span></button>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <button class="btn btn-ghost btn-icon menu-btn" id="menu-btn" type="button" aria-label="Menu"><svg class="icon" viewBox="0 0 24 24"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button>
+      <h1 id="page-title">Dashboard</h1>
+      <div class="actions" id="page-actions"></div>
+    </header>
+    <div class="page" id="page"></div>
+  </main>
+</div>
+<div class="taskbar" id="taskbar"></div>
+<div class="toasts" id="toasts"></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

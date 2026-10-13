@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Status</title>
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="status-wrap">
+  <div class="status">
+    <header class="st-head"><div class="brand"><img src="/static/logo.svg" alt=""><span class="name" id="title">Status</span></div><div class="st-actions"><button class="btn btn-ghost btn-icon" id="theme" type="button" title="Toggle theme"></button></div></header>
+    <nav class="st-tabs" id="tabs"><a href="#status" data-tab="status" class="active"><span class="ti" data-icon="activity"></span>Status</a><a href="#incidents" data-tab="incidents"><span class="ti" data-icon="alert"></span>Incidents <span class="count" id="incidents-count"></span></a></nav>
+    <div id="tab-status">
+      <section id="hero" class="st-status st-status--unknown"><span class="txt">Loading…</span></section>
+      <section id="notices"></section>
+      <section id="overview"></section>
+      <section id="groups"></section>
+    </div>
+    <div id="tab-incidents" class="hidden">
+      <section id="announcements"></section>
+      <section id="history" class="st-section"></section>
+    </div>
+    <footer class="st-foot" id="foot"></footer>
+  </div>
+</div>
+<script type="module" src="/static/uptime.js"></script>
+</body>
+</html>

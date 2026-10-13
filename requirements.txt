@@ -1,6 +1,9 @@
-flask
-apscheduler
-schedule
-requests
-paramiko
-django
+flask>=3.0,<4
+waitress>=3.0,<4
+apscheduler>=3.10,<4
+docker>=7.0,<8
+cryptography>=42
+paramiko>=3.4
+requests>=2.31
+pyotp>=2.9
+python-dotenv>=1.0

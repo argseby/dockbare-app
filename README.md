@@ -1,74 +1,153 @@
-# Docker Volume Backup v2.0
+# Dockbare
 
-A web UI to back up, restore, and manage Docker volumes with scheduling, retention policies, FTP/FTPS mirroring, and
-ntfy notifications.
+Dockbare backs up my Docker volumes, encrypts them, pushes them to a couple of FTP/SFTP servers
+and gets everything back when a box dies. I built it for my own servers; it's free for anyone to
+use, no account, no license key, no telemetry. It is a personal project, not a product: no support
+promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway.
 
-**Free to use — no license key, no account, no telemetry.** Made by [kiunke.dev](https://kiunke.dev).
+![Dockbare dashboard](image.png)
 
-![alt text](image.png "Docker Volume Backup")
+## What it does
 
+- **Backups** of any Docker volume as `tar.gz` (containers using the volume are stopped for a consistent
+  snapshot and started again), restore with one click, integrity check, upload of existing archives.
+- **Encryption** with one system-wide key from `.env`. Archives are encrypted before they leave the host,
+  so the FTP server only ever sees ciphertext. Old plain backups still restore, and
+  `python -m dockbare decrypt` works without the app if you ever need it.
+- **Any number of remotes** (FTP, FTPS, SFTP), each schedule and manual backup picks its targets, upload
+  status per remote, a sync job that catches up after outages. Remotes can be configured in the UI or in `.env`.
+- **Several instances, one server**: every installation has an instance name and stores under
+  `<base>/<instance>/<volume>/`, so three Dockbare boxes can share the same FTP without stepping on each other.
+- **Schedules & retention**: "daily at 03:00 on weekdays" or "every 12 h", delete older than N days and/or
+  keep at most N, optionally also on the remotes. The newest backup is never deleted.
+- **Recovery mode**: fresh server, same `.env`, scan a remote → see every instance, volume and backup that
+  is up there → pick → Dockbare downloads, verifies, creates missing volumes and restores.
+- **Peers**: instances watch each other. If a peer stops answering, you get an urgent notification;
+  when it's back, another one. Works even though they back up completely different things.
+- **Uptime**: every container's state, health check, exit code and OOM flag straight from the Docker
+  socket, with incidents, per-container rules (notify, auto-restart with a budget, require healthy,
+  grace period) and an optional public status page at `/uptime` that also shows your peers.
+- **Config snapshot**: everything that isn't in `.env` (schedules, remotes, channels, peers, monitors,
+  report/uptime settings) is encrypted with the backup key and pushed to every remote whenever it changes.
+  Recovery imports it with one click.
+- **Reports** (daily / weekly / monthly) by email, ntfy or webhook: what was backed up, what failed,
+  what got pruned, how much space is used, which schedules are overdue.
+- **Login** with password (plus optional TOTP), lockout after failed attempts, sessions you can revoke,
+  no third-party assets at all. Light and dark UI, works on a phone.
 
+## Running it
 
-> **⚠️ CRITICAL SECURITY WARNING**
->
-> * **Do NOT expose this service to the internet.** Mounting `/var/run/docker.sock` is equivalent to granting root
-    access to the host machine. You **MUST** run this service behind a secure reverse proxy (e.g., Traefik, Caddy) with
-    strong authentication enabled for any remote access.
-> * **Restore is a DESTRUCTIVE operation.** It permanently deletes all existing data in a volume before restoring the
-    backup. Always double-check your target volume and backup file.
-> * **Use FTPS instead of FTP.** Plain FTP sends credentials and data in cleartext.
+```bash
+git clone <this repo> dockbare && cd dockbare
+cp .env.example .env
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim sh -c "pip -q install -r requirements.txt && python -m dockbare gen-secret"
+nano .env               # admin password, secret key, encryption key (paste the generated values)
+docker compose up -d --build
+```
 
-### Features
+Open http://127.0.0.1:5000 and sign in with the user/password from `.env`.
 
-- **Backup & Restore:** Create compressed `tar.gz` backups of any Docker volume and restore them with a single click.
-- **Automated Scheduling:** Set up recurring backup schedules with flexible retention policies (e.g., keep backups for X
-  days).
-- **FTP/FTPS Mirroring:** Automatically mirror backups to a remote FTP or secure FTPS server for off-site storage.
-- **Ntfy Notifications:** Receive real-time notifications for backup success/failure and restore events.
-- **Simple UI:** A responsive, mobile-friendly dark interface with an activity dashboard and detailed logs.
+The compose file binds to localhost on purpose. Dockbare has the Docker socket, which is root on the
+host, so put a TLS reverse proxy (Traefik, Caddy, nginx) in front for remote access and set
+`DOCKBARE_BEHIND_PROXY=true`. Turn on TOTP if the UI is reachable from the internet.
+And **keep `DOCKBARE_ENCRYPTION_KEY` somewhere safe**; without it the encrypted backups are just noise.
 
-### Prerequisites
+### Portainer
 
-- Docker
-- Docker Compose
+Git-managed Portainer stacks don't have a `.env` file next to the compose file. Put the variables into
+the stack's *Environment variables* and change `env_file: .env` to `env_file: stack.env` (Portainer writes
+that file for you). Use absolute host paths for `/backups` and `/data`, otherwise a new stack gets a new
+`./backups` directory and your existing archives are simply not visible to it (they are not touched).
 
-### Quick Start
+## `.env`
 
-Create a `docker-compose.yml` (or use the one in this repo):
+Everything that matters for a reinstall lives in `.env`, so disaster recovery is: restore `.env`,
+`docker compose up -d`, open Recovery, import the configuration snapshot, restore the volumes.
 
-   ```yaml
-   services:
-     backup-service:
-       image: fluttered/dockbare:latest
-       container_name: docker-volume-backup
-       ports:
-         - "127.0.0.1:5000:5000"
-       volumes:
-         - ./backups:/backups
-         - /var/run/docker.sock:/var/run/docker.sock
-       environment:
-         - BACKUP_HOST_DIR=${PWD}/backups
-       restart: unless-stopped
-   ```
+| Variable | Description |
+|---|---|
+| `DOCKBARE_ADMIN_USER` / `DOCKBARE_ADMIN_PASSWORD` | Login. Required; everything is blocked without it. `DOCKBARE_ADMIN_PASSWORD_HASH` works too (`python -m dockbare hash-password`). |
+| `DOCKBARE_TOTP_SECRET` | Optional second factor (`python -m dockbare totp-setup`). |
+| `DOCKBARE_SECRET_KEY` | Signs sessions, encrypts stored passwords. Generated into `/data` if missing, but set it. |
+| `DOCKBARE_ENCRYPTION_KEY` | The backup encryption key. |
+| `DOCKBARE_INSTANCE_NAME` | Name of this installation, used as folder on shared remotes and shown to peers. |
+| `DOCKBARE_REMOTE_1_HOST`, `_TYPE`, `_PORT`, `_USER`, `_PASSWORD`, `_PATH`, `_TLS`, `_PASSIVE`, `_NAT_FIX`, `_VERIFY_TLS`, `_PRIVATE_KEY[_FILE]`, `_KEY_PASSPHRASE`, `_HOST_KEY`, `_INSTANCE_DIR`, `_ENABLED` | Remotes 1–9. Shown as locked in the UI. |
+| `DOCKBARE_SMTP_*`, `DOCKBARE_NTFY_*`, `DOCKBARE_WEBHOOK_*` | Notification channels (also configurable in the UI; `.env` wins). |
+| `DOCKBARE_PEER_TOKEN` | Token other instances use to read this one's status. Generated if missing. |
+| `DOCKBARE_PEER_1_URL`, `_TOKEN`, `_NAME`, `_INTERVAL`, `_THRESHOLD`, `_ALERT_ON_PROBLEMS`, `_VERIFY_TLS`, `_ENABLED` | Peers 1–9 to watch. Shown as locked in the UI. |
+| `DOCKBARE_BEHIND_PROXY`, `DOCKBARE_SECURE_COOKIES` | `true` behind a reverse proxy; cookie flag `auto`/`true`/`false`. |
+| `DOCKBARE_SESSION_*`, `DOCKBARE_LOGIN_*` | Session lifetime and login throttling. |
+| `DOCKBARE_HELPER_IMAGE` | Image for the helper containers (default: the Dockbare image itself). |
+| `TZ` | Time zone for schedules and reports. |
 
-Then start it:
+See [.env.example](.env.example) for all of them with comments; only the admin password is required,
+everything else has a default or is optional. What is *not* in `.env` (schedules, retention, channels
+set up in the UI, peers, monitors, report/uptime settings) lives in `/data/dockbare.db`, with passwords
+encrypted by the secret key, and is what the configuration snapshot contains. Anything that comes from
+`.env` is left out of the snapshot on purpose, so the two never overlap: `.env` + snapshot = full setup.
 
-   ```bash
-   # create the folder backups are written to
-   mkdir -p backups
+## How a backup works
 
-   # pull the image and start the service in the background
-   docker compose up -d
-   ```
+A helper container (never started) mounts the volume read-only; the Docker Engine archive API
+streams a tar through Dockbare, which gzips, encrypts and hashes it on the fly and writes
+`/backups/<volume>/<UTC timestamp>.tar.gz[.enc]` plus a `.meta.json` sidecar (size, SHA-256,
+containers, compose project, instance, key fingerprint). Then the containers are started again, the
+file and sidecar go to the selected remotes and retention runs. Restore is the same pipeline backwards
+into a helper container with the volume mounted read-write. There is no host path mapping any more
+(`BACKUP_HOST_DIR` is gone) and no `docker` CLI inside the image.
 
-> Note on Accessibility: By default, the service is only accessible from the host machine at http://localhost:5000 or http://127.0.0.1:5000. This is a security measure designed for access via a reverse proxy. If you understand the security risks and wish to expose the service directly, you can edit the docker-compose.yml file and change "127.0.0.1:5000:5000" to "5000:5000".
+### Recovery on a new host
 
-Access the web UI at `http://<your-server-ip>:5000`.
+1. Install with the same `.env` (same encryption key, remotes in `.env` if you like).
+2. Recovery → remote → *Scan*. If a configuration snapshot is up there, *Import* it: schedules,
+   remotes, channels, peers and monitors are back.
+3. `docker compose up -d` your stacks so the volumes exist with their names, or let Dockbare create them.
+4. Pick instance/volumes → *Restore selected*.
 
-### UI Overview
+Only the volume name has to match. The sidecar tells you which host and containers a backup came from
+and whether your key fits before anything is downloaded.
 
-- **Dashboard:** View storage usage, see running/upcoming jobs, and create a one-off manual backup.
-- **Schedules:** Add, edit, pause, or remove automated backup schedules and their retention policies.
-- **Backups:** View, download, restore, or delete existing backup archives and inspect their logs.
-- **Logs:** A global, filterable view of all actions performed by the application.
-- **Settings:** Configure FTP/FTPS server details and ntfy connection settings.
+### Upgrading from the old "Docker Volume Backup" (v2)
+
+Mount the same `./backups` directory. On first start the old `backup_config.json` (schedules, FTP server,
+ntfy topic) and the FTP sync state are imported and renamed to `*.migrated`. Existing archives keep
+working; the migrated FTP remote keeps the flat `<base>/<volume>` layout so nothing moves on the server.
+New: a `./data` volume and the `.env` with an admin password.
+
+### Uptime and the public status page
+
+Dockbare polls the Docker socket (and listens to its event stream) and classifies every container:
+running, unhealthy, exited with an error, OOM-killed, stuck restarting, or gone. A clean stop
+(exit code 0) is not an outage unless you say so. Per container you choose whether to notify,
+whether to restart it automatically (with a budget, e.g. 3 per 30 min, after which Dockbare gives up
+and tells you), and whether it appears on the public page. Enable the page under Uptime → Settings;
+it lives at `/uptime`, needs no login, shows only the containers you marked public (with display
+names) with a 90-day availability graph per service, plus your peers and *their* public services, so
+pinned instances give one global view. You can also declare incidents yourself (investigating →
+identified → monitoring → resolved, minor or major) and schedule maintenance windows; both appear on
+the page, and during a maintenance window the affected containers neither alert nor count as downtime.
+
+## Command line
+
+```bash
+python -m dockbare serve            # run the server (default)
+python -m dockbare check            # validate .env and Docker access
+python -m dockbare gen-secret       # print random DOCKBARE_SECRET_KEY / DOCKBARE_ENCRYPTION_KEY
+python -m dockbare hash-password    # print DOCKBARE_ADMIN_PASSWORD_HASH
+python -m dockbare totp-setup       # print a TOTP secret and otpauth:// URI
+python -m dockbare decrypt backup.tar.gz.enc   # decrypt without the app (asks for the key)
+```
+
+Inside the container: `docker exec -it dockbare python -m dockbare check`.
+
+## Hacking on it
+ 
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env.dev            # point DOCKBARE_DATA_DIR / DOCKBARE_BACKUP_DIR at local folders
+DOCKBARE_ENV_FILE=.env.dev python -m dockbare serve
+pytest
+```
+
+Architecture, the encryption format and the security model are in [docs/DESIGN.md](docs/DESIGN.md).
