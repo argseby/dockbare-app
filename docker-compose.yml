@@ -1,7 +1,8 @@
 services:
   dockbare:
-    image: fluttered/dockbare:latest
+    # Built from this checkout. Bump DOCKBARE_BUILD (any new value) to force a rebuild after a git update.
     build: .
+    image: dockbare:${DOCKBARE_BUILD:-local}
     container_name: dockbare
     restart: unless-stopped
     env_file:               # .env for a local checkout, stack.env when deployed as a Portainer git stack

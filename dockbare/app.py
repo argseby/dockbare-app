@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, request, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import __version__, crypto
+from . import __version__, build_id, crypto
 from .api import api
 from .auth import Auth, COOKIE_NAME
 from .config import Settings, load_settings
@@ -98,7 +98,7 @@ class Core:
             return
         self._started = True
         log = logging.getLogger("dockbare")
-        log.info("Dockbare %s starting (data=%s, backups=%s)", __version__, self.settings.data_dir, self.settings.backup_dir)
+        log.info("Dockbare %s build %s starting (data=%s, backups=%s)", __version__, build_id(), self.settings.data_dir, self.settings.backup_dir)
         if not self.auth.configured:
             log.error("No admin password configured! Set DOCKBARE_ADMIN_PASSWORD (or _HASH) in .env. All access is blocked until then.")
         if not self.keyring.available:
@@ -179,7 +179,7 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
 
     @app.get("/healthz")
     def healthz():
-        return jsonify({"ok": True, "version": __version__})
+        return jsonify({"ok": True, "version": __version__, "build": build_id()})
 
     @app.get("/uptime")
     def uptime_page():

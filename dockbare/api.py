@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Blueprint, Response, current_app, g, jsonify, request, send_file, stream_with_context
 
-from . import __version__, archive
+from . import __version__, archive, build_id
 from .auth import AuthError, CSRF_HEADER, CSRF_VALUE
 from .crypto import CryptoError
 from .dockerctl import DockerError, valid_volume_name
@@ -78,7 +78,7 @@ def _unexpected(e):
 # ---------------------------------------------------------------------- auth
 @api.get("/health")
 def health():
-    return jsonify({"ok": True, "app": "dockbare", "version": __version__})
+    return jsonify({"ok": True, "app": "dockbare", "version": __version__, "build": build_id()})
 
 
 @api.post("/auth/login")
@@ -430,6 +430,7 @@ def settings():
         "docker": c.docker.info(),
         "helper_image": c.docker._helper_image,
         "log_file": c.log_file,
+        "build": build_id(),
     })
 
 

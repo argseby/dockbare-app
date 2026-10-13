@@ -402,7 +402,8 @@ function renderEnvironment(c, s) {
       <dt>Data directory</dt><dd class="mono">${esc(e.data_dir)}</dd><dt>Backup directory</dt><dd class="mono">${esc(e.backup_dir)}</dd>
       <dt>Time zone</dt><dd>${esc(e.timezone)}</dd><dt>Behind proxy</dt><dd>${e.behind_proxy ? "yes (X-Forwarded-* trusted)" : "no"}</dd>
       <dt>Encryption</dt><dd>${e.encryption_configured ? `configured · fingerprint <code>${esc(s.encryption.fingerprint)}</code>` : "not configured"}</dd>
-      <dt>Log file</dt><dd class="mono">${esc(s.log_file || "")}</dd></dl></div></div>
+      <dt>Log file</dt><dd class="mono">${esc(s.log_file || "")}</dd>
+      <dt>Build</dt><dd class="mono">${esc(s.build || "")} <span class="muted small">(fingerprint of the deployed files; compare with <code>/api/health</code> after a redeploy)</span></dd></dl></div></div>
     <div class="card"><div class="card-h"><h2>.env reference</h2></div><div class="card-c"><div class="log">${esc(`DOCKBARE_ADMIN_USER=admin
 DOCKBARE_ADMIN_PASSWORD=change-me        # or DOCKBARE_ADMIN_PASSWORD_HASH
 DOCKBARE_TOTP_SECRET=                    # optional 2FA (python -m dockbare totp-setup)
