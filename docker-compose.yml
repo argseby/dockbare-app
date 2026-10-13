@@ -11,8 +11,8 @@ services:
         required: false
     ports:
       # Bind to localhost and put a TLS reverse proxy (Traefik, Caddy, nginx) in front.
-      # Change to "5000:5000" only if you really want to expose it directly.
-      - "127.0.0.1:5000:5000"
+      # Override with DOCKBARE_BIND (e.g. 127.0.0.1:5001 or 0.0.0.0:5000 to expose directly).
+      - "${DOCKBARE_BIND:-127.0.0.1:5000}:5000"
     volumes:
       - ./backups:/backups    # use absolute host paths under Portainer
       - ./data:/data
