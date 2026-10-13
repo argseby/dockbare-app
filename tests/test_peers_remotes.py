@@ -375,7 +375,7 @@ def test_uptime_public_page(uptime_app, monkeypatch):
     monkeypatch.setattr(core.manager.notifier, "notify", lambda *a, **k: None)
     anon = app.test_client()
     assert anon.get("/api/uptime/public").status_code == 404
-    r = anon.get("/uptime")
+    r = anon.get("/")
     assert r.status_code == 404 and b"not enabled" in r.data and b"login.js" not in r.data
     c.put("/api/uptime/settings", json={"public_enabled": True, "public_title": "My services"})
     c.put("/api/uptime/monitors/web", json={"public": True, "display_name": "Website"})
@@ -386,7 +386,7 @@ def test_uptime_public_page(uptime_app, monkeypatch):
     it = pl["groups"][0]["items"]
     assert len(it) == 1 and it[0]["name"] == "Website" and it[0]["status"] == "up" and it[0]["since"] is None and len(it[0]["history"]) == 90
     assert "db" not in str(pl)  # non-public containers never appear
-    assert anon.get("/uptime").status_code == 200 and b"uptime.js" in anon.get("/uptime").data
+    assert anon.get("/").status_code == 200 and b"uptime.js" in anon.get("/").data
     d.containers["web"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1, "health": None})
     core.uptime._failing_since["web"] = time.time() - 100
     core.uptime.poll()

@@ -6,7 +6,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from flask import Flask, Response, g, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import __version__, build_id, crypto
@@ -186,29 +186,44 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable" if build_tag == build else "no-cache"
         return resp
 
+    def status_page(status_ok: int = 200):
+        if core.uptime.settings().get("public_enabled"):
+            return page("uptime.html", status_ok)
+        if g.get("session"):
+            return redirect("/admin", code=302)
+        return page("status-disabled.html", 404)
+
     @app.get("/")
     def index():
+        """Public status page (or the 'not enabled' note); the app lives under /admin."""
+        return status_page()
+
+    @app.get("/uptime")
+    def uptime_page():
+        return status_page()
+
+    @app.get("/admin")
+    def admin():
         return page("index.html" if g.get("session") else "login.html")
 
     @app.get("/login")
     def login_page():
+        if g.get("session"):
+            return redirect("/admin", code=302)
         return page("login.html")
 
     @app.get("/healthz")
     def healthz():
         return jsonify({"ok": True, "version": __version__, "build": build_id()})
 
-    @app.get("/uptime")
-    def uptime_page():
-        if not core.uptime.settings().get("public_enabled"):
-            return page("status-disabled.html", 404)
-        return page("uptime.html")
-
     @app.errorhandler(404)
     def _404(_e):
         if request.path.startswith("/api/"):
             return jsonify({"error": "Not found"}), 404
-        return page("index.html" if g.get("session") else "login.html", 404)
+        if g.get("session") or request.path.startswith("/admin"):
+            return page("index.html" if g.get("session") else "login.html", 404)
+        public = core.uptime.settings().get("public_enabled")
+        return page("uptime.html" if public else "status-disabled.html", 404)
 
     @app.errorhandler(413)
     def _413(_e):

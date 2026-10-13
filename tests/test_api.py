@@ -8,7 +8,9 @@ from tests.conftest import make_tar, wait_task
 def test_requires_auth(client):
     assert client.get("/api/overview").status_code == 401
     assert client.get("/api/health").status_code == 200
-    assert b"Sign in" in client.get("/").data
+    assert b"Sign in" in client.get("/admin").data
+    r = client.get("/")
+    assert r.status_code == 404 and b"not enabled" in r.data  # public page off, anonymous visitor
 
 
 def test_login_logout_and_csrf(client):
@@ -279,9 +281,9 @@ def test_versioned_static_assets(client, auth_client, app):
     from dockbare import build_id
 
     b = build_id()
-    html = app.test_client().get("/").data.decode()
+    html = app.test_client().get("/admin").data.decode()
     assert f'"/static/{b}/app.js"' not in html and f'"/static/{b}/login.js"' in html  # login page for anonymous
-    html = auth_client.get("/").data.decode()
+    html = auth_client.get("/admin").data.decode()
     assert f'"/static/{b}/app.js"' in html and f'"/static/{b}/styles.css"' in html
     r = client.get(f"/static/{b}/app.js")
     assert r.status_code == 200 and "immutable" in r.headers["Cache-Control"]
@@ -321,3 +323,16 @@ def test_fresh_database_warning(auth_client, app):
     o = auth_client.get("/api/overview").get_json()
     assert any("empty" in w and "Recovery" in w for w in o["security"])
     assert any(e["kind"] == "app.fresh_database" for e in auth_client.get("/api/events").get_json())
+
+
+def test_root_is_status_page(auth_client, app):
+    # signed-in admin with the public page off is sent to the app
+    r = auth_client.get("/")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/admin")
+    assert auth_client.get("/login").status_code == 302
+    auth_client.put("/api/uptime/settings", json={"public_enabled": True})
+    anon = app.test_client()
+    for path in ("/", "/uptime"):
+        r = anon.get(path)
+        assert r.status_code == 200 and b"uptime.js" in r.data
+    assert b"login.js" in anon.get("/admin").data

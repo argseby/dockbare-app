@@ -98,6 +98,7 @@ async function init() {
   let session;
   try { session = await api.get("/api/auth/session", { noRedirect: true }); } catch { session = null; }
   if (!session || !session.authenticated) { location.href = "/login"; return; }
+  if (location.pathname !== "/admin") history.replaceState(null, "", "/admin" + location.hash);
   $("#brand-version").textContent = `v${session.version}`;
   $(".nav").innerHTML = NAV.map(([k, label, ic]) => `<a href="#${k}" data-page="${k}" title="${esc(label)}">${icon(ic)} <span class="lbl">${esc(label)}</span></a>`).join("");
   $("#logout-btn").title = "Sign out";

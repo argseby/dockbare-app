@@ -26,7 +26,7 @@ promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway
   when it's back, another one. Works even though they back up completely different things.
 - **Uptime**: every container's state, health check, exit code and OOM flag straight from the Docker
   socket, with incidents, per-container rules (notify, auto-restart with a budget, require healthy,
-  grace period) and an optional public status page at `/uptime` that also shows your peers.
+  grace period) and an optional public status page at `/` (the app itself lives under `/admin`) that also shows your peers.
 - **Config snapshot**: everything that isn't in `.env` (schedules, remotes, channels, peers, monitors,
   report/uptime settings) is encrypted with the backup key and pushed to every remote whenever it changes.
   Recovery imports it with one click.
@@ -45,7 +45,8 @@ nano .env               # admin password, secret key, encryption key (paste the 
 docker compose up -d --build
 ```
 
-Open http://127.0.0.1:5000 and sign in with the user/password from `.env`.
+Open http://127.0.0.1:5000/admin and sign in with the user/password from `.env`. The root URL `/` is the
+public status page (once enabled under Uptime → Settings); until then it shows a short note.
 
 The compose file binds to localhost on purpose. Dockbare has the Docker socket, which is root on the
 host, so put a TLS reverse proxy (Traefik, Caddy, nginx) in front for remote access and set
@@ -128,8 +129,8 @@ running, unhealthy, exited with an error, OOM-killed, stuck restarting, or gone.
 (exit code 0) is not an outage unless you say so. Per container you choose whether to notify,
 whether to restart it automatically (with a budget, e.g. 3 per 30 min, after which Dockbare gives up
 and tells you), and whether it appears on the public page. Enable the page under Uptime → Settings;
-it lives at `/uptime`, needs no login, shows only the containers you marked public (with display
-names) with a 90-day availability graph per service, plus your peers and *their* public services, so
+it is served at `/` (and `/uptime`), needs no login, shows only the containers you marked public (with
+display names) with a 90-day availability graph per service, plus your peers and *their* public services, so
 pinned instances give one global view. You can also declare incidents yourself (investigating →
 identified → monitoring → resolved, minor or major) and schedule maintenance windows; both appear on
 the page, and during a maintenance window the affected containers neither alert nor count as downtime.
