@@ -19,3 +19,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=${TZ:-UTC}
+    networks:
+      - proxy
+
+networks:
+  # Set PROXY_NETWORK to the existing network of your reverse proxy (e.g. proxy-network);
+  # without it the container simply uses Docker's default bridge network.
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-bridge}

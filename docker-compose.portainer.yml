@@ -2,7 +2,7 @@
 # Everything you may need to change comes from the stack's environment variables (Portainer writes
 # them to stack.env, which is also handed to the container). Defaults are in ${VAR:-default}.
 #
-#   PROXY_NETWORK          existing reverse-proxy network to join      (default: reverse-proxy)
+#   PROXY_NETWORK          existing proxy-network network to join      (default: proxy-network)
 #   DOCKBARE_HOST          public host name for the Traefik labels     (default: backup.example.com)
 #   DOCKBARE_BACKUPS_PATH  host directory for the archives             (default: /srv/dockbare/backups)
 #   DOCKBARE_DATA_PATH     host directory for database/logs/snapshots  (default: /srv/dockbare/data)
@@ -26,7 +26,7 @@ services:
       - proxy
     labels:
       - traefik.enable=${TRAEFIK_ENABLE:-true}
-      - traefik.docker.network=${PROXY_NETWORK:-reverse-proxy}
+      - traefik.docker.network=${PROXY_NETWORK:-proxy-network}
       - traefik.http.routers.dockbare.rule=Host(`${DOCKBARE_HOST:-backup.example.com}`)
       - traefik.http.routers.dockbare.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
       - traefik.http.routers.dockbare.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
@@ -38,4 +38,4 @@ services:
 networks:
   proxy:
     external: true
-    name: ${PROXY_NETWORK:-reverse-proxy}
+    name: ${PROXY_NETWORK:-proxy-network}
