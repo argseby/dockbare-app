@@ -79,6 +79,7 @@ Everything that matters for a reinstall lives in `.env`, so disaster recovery is
 | `DOCKBARE_BEHIND_PROXY`, `DOCKBARE_SECURE_COOKIES` | `true` behind a reverse proxy; cookie flag `auto`/`true`/`false`. |
 | `DOCKBARE_SESSION_*`, `DOCKBARE_LOGIN_*` | Session lifetime and login throttling. |
 | `DOCKBARE_HELPER_IMAGE` | Image for the helper containers (default: the Dockbare image itself). |
+| `DOCKBARE_PORT`, `DOCKBARE_LISTEN` | Port and bind address inside the container (5000 / 0.0.0.0). `DOCKBARE_HOST` is the public host name used only by the compose/Traefik labels. |
 | `TZ` | Time zone for schedules and reports. |
 
 See [.env.example](.env.example) for all of them with comments; only the admin password is required,

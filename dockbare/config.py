@@ -290,7 +290,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         backup_dir=backup_dir,
         log_dir=log_dir,
-        host=_env("HOST", "0.0.0.0"),
+        host=_env("LISTEN", "0.0.0.0"),  # DOCKBARE_HOST is the public host name (compose/Traefik), not the bind address
         port=_env_int("PORT", 5000),
         behind_proxy=_env_bool("BEHIND_PROXY", False),
         secure_cookies=(_env("SECURE_COOKIES", "auto") or "auto").lower(),
