@@ -10,8 +10,9 @@
 # plus the application variables from .env.example (DOCKBARE_ADMIN_PASSWORD, keys, ...).
 services:
   dockbare:
-    build: .                                   # built from this repo by Portainer
-    image: dockbare:${DOCKBARE_BUILD:-portainer} # bump DOCKBARE_BUILD (any new value) to force a rebuild after a git update
+    build: .                                   # built from this repo by Portainer on every update
+    image: dockbare:${DOCKBARE_BUILD:-portainer}
+    pull_policy: build                         # never try to pull "dockbare" from a registry; always build
     container_name: dockbare
     restart: unless-stopped
     env_file:

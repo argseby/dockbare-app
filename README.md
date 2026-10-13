@@ -58,9 +58,9 @@ Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as the compose 
 reads everything from the stack's *Environment variables* (Portainer writes them to `stack.env`): the app
 settings from `.env.example` plus `PROXY_NETWORK` (your reverse-proxy network), `DOCKBARE_HOST` (for the
 Traefik labels) and `DOCKBARE_BACKUPS_PATH` / `DOCKBARE_DATA_PATH` (absolute host directories, so a
-redeploy finds the same archives). Portainer builds the image from the repository; compose reuses that
-image on later updates, so after pulling a new commit bump `DOCKBARE_BUILD` to any new value to force
-a rebuild. `/api/health` shows the `build` fingerprint so you can see which version is actually running.
+redeploy finds the same archives). Portainer builds the image from the repository on every stack update
+(`pull_policy: build`); leave Portainer's "re-pull image" option off, there is nothing to pull.
+`/api/health` shows the `build` fingerprint so you can see which version is actually running.
 
 ## `.env`
 
