@@ -7,3 +7,4 @@ paramiko>=3.4
 requests>=2.31
 pyotp>=2.9
 python-dotenv>=1.0
+qrcode>=7.4

@@ -41,12 +41,21 @@ def cmd_hash_password(args) -> int:
 def cmd_totp_setup(args) -> int:
     import pyotp
 
-    secret = pyotp.random_base32()
+    secret = args.secret or pyotp.random_base32()
     uri = pyotp.TOTP(secret).provisioning_uri(name=args.user, issuer_name="Dockbare")
-    print("Add this to your .env and restart:\n")
-    print(f"DOCKBARE_TOTP_SECRET={secret}\n")
-    print("Then add the secret to your authenticator app (manual entry) or use this URI:\n")
-    print(uri)
+    print("1. Add this to your .env / stack environment and restart:\n")
+    print(f"   DOCKBARE_TOTP_SECRET={secret}\n")
+    print("2. Scan this with your authenticator app (or enter the secret manually):\n")
+    try:
+        import qrcode
+
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(uri)
+        qr.print_ascii(invert=True)
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"\n   {uri}\n")
+    print("3. Log in with user, password and the 6-digit code. The Security tab shows the QR again for a second device.")
     return 0
 
 
@@ -122,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     hp.set_defaults(fn=cmd_hash_password)
     tp = sub.add_parser("totp-setup", help="generate a TOTP secret for two-factor login")
     tp.add_argument("--user", default=os.environ.get("DOCKBARE_ADMIN_USER", "admin"))
+    tp.add_argument("--secret", help="show the QR for an existing secret instead of generating one")
     tp.set_defaults(fn=cmd_totp_setup)
     sub.add_parser("gen-secret", help="print random values for DOCKBARE_SECRET_KEY / DOCKBARE_ENCRYPTION_KEY").set_defaults(fn=cmd_gen_secret)
     dp = sub.add_parser("decrypt", help="decrypt a .tar.gz.enc backup without the app")

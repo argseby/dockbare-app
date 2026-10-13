@@ -175,6 +175,7 @@ export const dashboard = {
     const peersDown = peers.filter((p) => p.enabled && (p.alert_active || p.ok === false));
     const up = o.uptime || null;
     const banners = [];
+    (o.security || []).forEach((w) => banners.push(`<div class="banner warn">${icon("shield-alert")}<div>${esc(w)}</div></div>`));
     if (up && up.down.length) banners.push(`<div class="banner danger">${icon("radar")}<div><b>Container${up.down.length > 1 ? "s" : ""} down:</b> ${esc(up.down.join(", "))}. <a href="#uptime">Uptime</a></div></div>`);
     if (peersDown.length) banners.push(`<div class="banner danger">${icon("heart-pulse")}<div><b>Peer instance down:</b> ${esc(peersDown.map((p) => p.name + (p.error ? " — " + p.error : "")).join("; "))}. <a href="#peers">Peers</a></div></div>`);
     if (!o.docker.ok) banners.push(`<div class="banner danger">${icon("alert")}<div><b>Docker is not reachable.</b> ${esc(o.docker.error || "")} Make sure <code>/var/run/docker.sock</code> is mounted.</div></div>`);

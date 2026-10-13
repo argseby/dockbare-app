@@ -354,8 +354,8 @@ async function renderSecurity(c, s) {
   c.innerHTML = `<div class="grid cols-2">
     <div class="stack">
       <div class="card"><div class="card-h"><h2>${icon("shield-check")} Protection</h2></div><div class="card-c"><dl class="kv">
-        <dt>Admin user</dt><dd><code>${esc(st.admin_user)}</code></dd>
-        <dt>Two-factor (TOTP)</dt><dd>${sec.totp.enabled ? `<span class="badge ok">enabled</span>` : `<span class="badge warn">off</span> <span class="muted small">run <code>python -m dockbare totp-setup</code></span>`}</dd>
+        <dt>Admin user</dt><dd><code>${esc(st.admin_user)}</code>${sec.weak_password ? ` <span class="badge danger">${icon("shield-alert", "sm")} weak password: ${esc(sec.weak_password)}</span>` : ` <span class="badge ok">${icon("shield-check", "sm")} password ok</span>`}</dd>
+        <dt>Two-factor (TOTP)</dt><dd>${sec.totp.enabled ? `<span class="badge ok">${icon("shield-check", "sm")} enabled${sec.totp.source === "env" ? " · from .env" : ""}</span> <span class="muted small">${sec.totp.recovery_left} recovery code(s) left</span><div class="flex flex-wrap mt"><button class="btn btn-sm" data-action="totpQr">${icon("eye")} QR for another device</button>${sec.totp.source === "env" ? "" : `<button class="btn btn-sm" data-action="totpRecovery">${icon("key")} New recovery codes</button><button class="btn btn-sm btn-danger-ghost" data-action="totpDisable">${icon("x")} Disable</button>`}</div>` : `<span class="badge warn">${icon("shield-alert", "sm")} off</span> <button class="btn btn-sm btn-primary" data-action="totpEnable">${icon("shield-check")} Enable two-factor</button><div class="help">Adds a 6-digit code from an authenticator app to the login.</div>`}</dd>
         <dt>Login throttling</dt><dd>lockout after ${st.login_max_attempts} failures within ${st.login_window_minutes} min, escalating up to 1 h</dd>
         <dt>Session</dt><dd>expires after ${Math.round(st.session_idle_minutes / 60)} h idle, max ${Math.round(st.session_max_hours / 24)} days</dd>
         <dt>Cookies</dt><dd>HttpOnly · SameSite=Strict · Secure ${esc(st.secure_cookies)}${st.behind_proxy ? " · proxy headers trusted" : ""}</dd>
@@ -366,7 +366,30 @@ async function renderSecurity(c, s) {
     </div>
     <div class="card"><div class="card-h"><h2>Active sessions</h2><div class="actions"><button class="btn btn-sm btn-danger-ghost" data-action="revokeAll">${icon("log-out")} Sign out other sessions</button></div></div><div class="card-c tight"><div class="table-wrap"><table><thead><tr><th>Started</th><th>Last seen</th><th>IP</th><th>Client</th><th></th></tr></thead><tbody>
       ${sec.sessions.map((x) => `<tr><td class="nowrap">${esc(fmtTime(x.created_at))}</td><td class="nowrap">${esc(ago(x.last_seen))}</td><td class="mono">${esc(x.ip)}</td><td class="small ellipsis" title="${esc(x.user_agent)}">${esc((x.user_agent || "").slice(0, 40))}${x.current ? ` <span class="badge info">this</span>` : ""}</td><td><div class="actions">${x.current ? "" : `<button class="btn btn-sm btn-ghost btn-icon" data-action="revoke" data-id="${esc(x.id)}" title="Revoke">${icon("x")}</button>`}</div></td></tr>`).join("")}</tbody></table></div></div></div></div>`;
+  const codesHtml = (codes) => `<div class="banner warn">${icon("key")}<div><b>Save these recovery codes now.</b> Each one works once instead of an authenticator code. They are not shown again.</div></div><div class="log" data-codes>${codes.map(esc).join("\n")}</div><div class="flex mt"><button class="btn btn-sm" data-action="copyCodes">${icon("copy")} Copy</button><a class="btn btn-sm" download="dockbare-recovery-codes.txt" href="data:text/plain;charset=utf-8,${encodeURIComponent(codes.join("\n") + "\n")}">${icon("download")} Download</a></div>`;
   bind(c, {
+    totpEnable: async () => {
+      let d;
+      try { d = await api.post("/api/security/totp/setup", {}); } catch (e) { return toast(e.message, "error"); }
+      const m = modal({ title: "Enable two-factor authentication", size: "wide", body: `
+        <div class="form-row"><div class="center"><img alt="QR code" width="220" height="220" src="data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(d.qr_svg)))}"></div>
+          <div><p class="small">1. Scan the code with Google Authenticator, Aegis, Bitwarden, 1Password or any TOTP app, or enter the secret manually:</p><div class="input-group"><input type="text" value="${esc(d.secret)}" readonly><button type="button" class="btn btn-ghost btn-icon" data-action="copySecret" title="Copy">${icon("copy", "sm")}</button></div>
+          <p class="small mt">2. Enter the 6-digit code the app shows now:</p><input type="text" name="code" inputmode="numeric" placeholder="123 456" autocomplete="one-time-code"></div></div>`,
+        footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-action="activate">${icon("shield-check")} Activate</button>` });
+      bind(m.el, {
+        copySecret: () => copyText(d.secret),
+        activate: async (b) => { await busy(b, async () => { const r = await api.post("/api/security/totp/enable", { code: $("input[name=code]", m.el).value }); $(".modal-h h2", m.el).textContent = "Two-factor is on"; $(".modal-c", m.el).innerHTML = `<p>From now on the login asks for a code from your app.</p>${codesHtml(r.recovery_codes)}`; $(".modal-f", m.el).innerHTML = `<button class="btn btn-primary" data-close>Done</button>`; bind(m.el, { copyCodes: () => copyText(r.recovery_codes.join("\n")) }); $$("[data-close]", m.el).forEach((x) => x.addEventListener("click", () => { m.close(); renderSecurity(c, s); })); }).catch((e) => toast(e.message, "error")); },
+      });
+    },
+    totpDisable: async () => {
+      const m = modal({ title: "Disable two-factor", body: `<p class="small">Confirm with your password and a current authenticator (or recovery) code.</p><div class="form-group"><label class="field">Password</label><input type="password" name="password" autocomplete="current-password"></div><div class="form-group"><label class="field">Code</label><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code"></div>`, footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-danger" data-action="go">${icon("x")} Disable</button>` });
+      bind(m.el, { go: async (b) => { const f = formValues(m.el); await busy(b, async () => { await api.post("/api/security/totp/disable", f); toast("Two-factor disabled", "success"); m.close(); renderSecurity(c, s); }).catch((e) => toast(e.message, "error")); } });
+    },
+    totpRecovery: async () => {
+      const m = modal({ title: "New recovery codes", body: `<p class="small">This replaces all existing recovery codes. Confirm with a current authenticator code.</p><div class="form-group"><label class="field">Code</label><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code"></div>`, footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-action="go">${icon("key")} Generate</button>` });
+      bind(m.el, { go: async (b) => { await busy(b, async () => { const r = await api.post("/api/security/totp/recovery", formValues(m.el)); $(".modal-c", m.el).innerHTML = codesHtml(r.recovery_codes); $(".modal-f", m.el).innerHTML = `<button class="btn btn-primary" data-close>Done</button>`; bind(m.el, { copyCodes: () => copyText(r.recovery_codes.join("\n")) }); $$("[data-close]", m.el).forEach((x) => x.addEventListener("click", () => { m.close(); renderSecurity(c, s); })); }).catch((e) => toast(e.message, "error")); } });
+    },
+    totpQr: () => { modal({ title: "Authenticator QR code", body: `<p class="small muted">Scan with Google Authenticator, Aegis, Bitwarden, 1Password… Anyone who sees this code can generate your login codes.</p><div class="center"><img src="/api/security/totp-qr?t=${Date.now()}" alt="TOTP QR code" width="260" height="260"></div>`, footer: `<button class="btn" data-close>Close</button>` }); },
     revokeAll: async (b) => { const r = await api.del("/api/security/sessions"); toast(`${r.revoked} session(s) revoked`, "success"); renderSecurity(c, s); },
     revoke: async (b) => { await api.del(`/api/security/sessions/${b.dataset.id}`); renderSecurity(c, s); },
   });

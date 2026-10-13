@@ -74,6 +74,8 @@ class ConfigSync:
             "peer_token": (m.peers.token() if (m.peers and include_secrets and m.peers.token_source() != "env") else None),
             "monitors": m.uptime.monitors() if m.uptime else {},
             "uptime": m.uptime.settings() if m.uptime else None,
+            "totp": ({"secret": m.auth.totp_secret(), "recovery": m.db.get_setting("totp_recovery") or []}
+                     if (include_secrets and getattr(m, "auth", None) and m.auth.totp_source == "ui") else None),
         }
 
     def to_bytes(self, encrypt: bool = True) -> bytes:
@@ -109,7 +111,7 @@ class ConfigSync:
     def apply(self, doc: dict, *, sections: list[str] | None = None) -> dict:
         """Import a snapshot. Rows configured through .env are never touched."""
         m = self.m
-        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime"])
+        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime", "totp"])
         summary: dict = {}
         if "remotes" in want:
             n = 0
@@ -163,6 +165,10 @@ class ConfigSync:
         if "uptime" in want and m.uptime and isinstance(doc.get("uptime"), dict):
             m.uptime.save_settings(doc["uptime"])
             summary["uptime"] = True
+        if "totp" in want and isinstance(doc.get("totp"), dict) and doc["totp"].get("secret") and getattr(m, "auth", None) and m.auth.totp_source != "env":
+            m.db.set_setting("totp_secret", m.secretbox.encrypt(doc["totp"]["secret"]))
+            m.db.set_setting("totp_recovery", list(doc["totp"].get("recovery") or []))
+            summary["totp"] = True
         m.event("warning", "config.imported", f"Configuration imported from snapshot of {doc.get('instance')} ({time.strftime('%Y-%m-%d %H:%M', time.gmtime(doc.get('exported_at') or 0))} UTC)", data=summary)
         return summary
 

@@ -88,7 +88,8 @@ class Core:
         self.manager.uptime = self.uptime
         self.configsync = ConfigSync(self.manager)
         self.manager.configsync = self.configsync
-        self.auth = Auth(settings, self.db, on_event=self.manager.event, notify=self.manager.notifier.notify)
+        self.auth = Auth(settings, self.db, on_event=self.manager.event, notify=self.manager.notifier.notify, secretbox=self.secretbox)
+        self.manager.auth = self.auth
         self.cookie_name = COOKIE_NAME
         self._started = False
 
@@ -133,6 +134,7 @@ class Core:
 
 
 def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
+    os.umask(0o077)  # database, logs, archives and snapshots are created owner-only
     settings = settings or load_settings()
     app = Flask("dockbare", static_folder=str(STATIC_DIR), static_url_path="/static")
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024 * 1024  # 64 GiB uploads

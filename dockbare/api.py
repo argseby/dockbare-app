@@ -472,7 +472,8 @@ def security():
         "attempts": c.auth.recent_attempts(),
         "this_ip": {"ip": request.remote_addr, "failures": failures, "locked_until": locked_until},
         "settings": {k: v for k, v in c.settings.public_dict().items() if k.startswith(("session", "login", "behind", "secure", "admin", "totp", "generated"))},
-        "totp": {"enabled": c.auth.totp_enabled},
+        "totp": {"enabled": c.auth.totp_enabled, "source": c.auth.totp_source, "recovery_left": c.auth.recovery_codes_left()},
+        "weak_password": c.auth.weak_password,
     })
 
 
@@ -499,6 +500,7 @@ def peer_status():
     token = auth[7:].strip() if auth.startswith("Bearer ") else None
     if not c.peers.verify_token(token):
         log.warning("Rejected peer status request from %s", request.remote_addr)
+        time.sleep(0.5)
         return err("Invalid peer token.", 401)
     return jsonify(c.peers.self_status())
 
@@ -678,3 +680,55 @@ def uptime_announcement_update_delete(aid, uid):
 def uptime_announcement_update_edit(aid, uid):
     data = body()
     return jsonify(core().uptime.edit_update(aid, uid, data.get("message"), data.get("status") or None))
+
+
+def _qr_svg(uri: str) -> str:
+    import io
+
+    import qrcode
+    import qrcode.image.svg
+
+    img = qrcode.make(uri, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return buf.getvalue().decode("utf-8")
+
+
+@api.get("/security/totp-qr")
+def totp_qr():
+    """SVG QR code of the active TOTP secret (for adding another authenticator device)."""
+    import pyotp
+
+    c = core()
+    sec = c.auth.totp_secret()
+    if not sec:
+        return err("TOTP is not configured.", 404)
+    uri = pyotp.TOTP(sec).provisioning_uri(name=c.settings.admin_user, issuer_name="Dockbare")
+    c.manager.event("warning", "auth.totp_qr", "TOTP QR code displayed")
+    return Response(_qr_svg(uri), mimetype="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+@api.post("/security/totp/setup")
+def totp_setup():
+    c = core()
+    d = c.auth.totp_begin_setup()
+    return jsonify({"secret": d["secret"], "uri": d["uri"], "qr_svg": _qr_svg(d["uri"])})
+
+
+@api.post("/security/totp/enable")
+def totp_enable():
+    codes = core().auth.totp_confirm_setup(str(body().get("code") or ""))
+    return jsonify({"ok": True, "recovery_codes": codes})
+
+
+@api.post("/security/totp/disable")
+def totp_disable():
+    data = body()
+    core().auth.totp_disable(str(data.get("password") or ""), str(data.get("code") or ""))
+    return jsonify({"ok": True})
+
+
+@api.post("/security/totp/recovery")
+def totp_recovery():
+    codes = core().auth.totp_regenerate_recovery(str(body().get("code") or ""))
+    return jsonify({"recovery_codes": codes})

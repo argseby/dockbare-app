@@ -1075,9 +1075,23 @@ class Manager:
             "storage_history": samples,
             "peers": self.peers.summary() if self.peers else [],
             "uptime": self.uptime.summary() if self.uptime else None,
+            "security": self.security_warnings(),
             "sync": {"enabled": self.general()["sync_enabled"], "interval_minutes": self.general()["sync_interval_minutes"],
                      "next_run": (lambda j: j.next_run_time.timestamp() if j and j.next_run_time else None)(self.scheduler.get_job("sync") if self.scheduler.running else None)},
         }
+
+    def security_warnings(self) -> list[str]:
+        out = []
+        auth = getattr(self, "auth", None)
+        if auth is not None and getattr(auth, "weak_password", None):
+            out.append(f"Weak admin login: {auth.weak_password}. Set a long random DOCKBARE_ADMIN_PASSWORD.")
+        if self.settings.generated_secret:
+            out.append("DOCKBARE_SECRET_KEY is auto-generated; put it into .env so sessions and stored passwords survive a reinstall.")
+        if not self.keyring.available:
+            out.append("No DOCKBARE_ENCRYPTION_KEY: backups and configuration snapshots are stored and uploaded unencrypted.")
+        if auth is not None and not getattr(auth, "totp_enabled", False) and self.settings.behind_proxy:
+            out.append("Reachable through a proxy without two-factor login. Consider DOCKBARE_TOTP_SECRET (python -m dockbare totp-setup).")
+        return out
 
     def housekeeping(self) -> None:
         try:

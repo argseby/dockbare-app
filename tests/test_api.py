@@ -218,3 +218,58 @@ def test_notification_settings_from_env(settings, fake_docker, monkeypatch):
         assert "env-secret" not in (core.db.get_setting("notifications") and str(core.db.get_setting("notifications")) or "")
     finally:
         app.extensions["dockbare"].stop()
+
+
+def test_totp_qr_endpoint(auth_client, app):
+    assert auth_client.get("/api/security/totp-qr").status_code == 404
+    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    r = auth_client.get("/api/security/totp-qr")
+    assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"<svg" in r.data
+    assert app.test_client().get("/api/security/totp-qr").status_code == 401
+
+
+def test_totp_gui_enable_login_recovery_disable(auth_client, app):
+    import pyotp
+
+    core = app.extensions["dockbare"]
+    sec = auth_client.get("/api/security").get_json()["totp"]
+    assert sec == {"enabled": False, "source": None, "recovery_left": 0}
+    d = auth_client.post("/api/security/totp/setup").get_json()
+    assert d["secret"] and d["uri"].startswith("otpauth://") and "<svg" in d["qr_svg"]
+    assert auth_client.post("/api/security/totp/enable", json={"code": "000000"}).status_code == 400
+    assert not core.auth.totp_enabled
+    r = auth_client.post("/api/security/totp/enable", json={"code": pyotp.TOTP(d["secret"]).now()})
+    assert r.status_code == 200
+    codes = r.get_json()["recovery_codes"]
+    assert len(codes) == 8 and all(len(c) == 11 and c[5] == "-" for c in codes)
+    assert core.auth.totp_enabled and core.auth.totp_source == "ui"
+    assert "enc:v1:" in core.db.one("SELECT value FROM settings WHERE key='totp_secret'")["value"]
+    # login now needs a code
+    c2 = app.test_client()
+    assert c2.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234"}).status_code == 401
+    assert c2.get("/api/auth/session").get_json()["totp_enabled"] is True
+    import time
+    time.sleep(0)
+    assert c2.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234", "totp": pyotp.TOTP(d["secret"]).now()}).status_code == 200
+    # recovery code works once
+    c3 = app.test_client()
+    assert c3.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234", "totp": codes[0]}).status_code == 200
+    assert auth_client.get("/api/security").get_json()["totp"]["recovery_left"] == 7
+    c4 = app.test_client()
+    assert c4.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234", "totp": codes[0]}).status_code == 401
+    # regenerate recovery codes, then disable (needs password + code)
+    r = auth_client.post("/api/security/totp/recovery", json={"code": codes[1]})
+    assert r.status_code == 200 and len(r.get_json()["recovery_codes"]) == 8
+    assert auth_client.post("/api/security/totp/disable", json={"password": "wrong", "code": codes[2]}).status_code == 401
+    assert auth_client.post("/api/security/totp/disable", json={"password": "test-password-1234", "code": "123456"}).status_code == 401
+    new_codes = r.get_json()["recovery_codes"]
+    assert auth_client.post("/api/security/totp/disable", json={"password": "test-password-1234", "code": new_codes[0]}).status_code == 200
+    assert not core.auth.totp_enabled
+    assert app.test_client().post("/api/auth/login", json={"username": "admin", "password": "test-password-1234"}).status_code == 200
+
+
+def test_totp_env_locks_gui(auth_client, app):
+    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    assert auth_client.get("/api/security").get_json()["totp"]["source"] == "env"
+    assert auth_client.post("/api/security/totp/setup").status_code == 400
+    assert auth_client.post("/api/security/totp/disable", json={"password": "test-password-1234", "code": "x"}).status_code == 400

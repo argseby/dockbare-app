@@ -68,3 +68,36 @@ def test_password_hash_env(settings):
     settings.admin_password_hash = generate_password_hash("hashed-pw", method="scrypt")
     a = _auth(settings)
     assert a.login("admin", "hashed-pw", None, "1.1.1.1", "ua")
+
+
+def test_weak_password_flagged(settings):
+    settings.admin_password = "admin"
+    assert _auth(settings).weak_password
+    settings.admin_password = "short"
+    assert "shorter" in _auth(settings).weak_password
+    settings.admin_password = "correct horse battery staple"
+    assert _auth(settings).weak_password is None
+
+
+def test_totp_replay_rejected(settings):
+    import pyotp
+
+    settings.totp_secret = pyotp.random_base32()
+    a = _auth(settings)
+    code = pyotp.TOTP(settings.totp_secret).now()
+    assert a.login("admin", "test-password-1234", code, "1.1.1.1", "ua")
+    try:
+        a.login("admin", "test-password-1234", code, "1.1.1.1", "ua")
+        raise AssertionError("replayed code accepted")
+    except AuthError as e:
+        assert e.status == 401
+
+
+def test_global_throttle_slows_but_does_not_lock(settings, monkeypatch):
+    a = _auth(settings)
+    for i in range(35):
+        a.db.execute("INSERT INTO login_attempts(ts, ip, username, success) VALUES(?,?,?,0)", (time.time(), f"10.0.0.{i}", "x"))
+    slept = []
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    assert a.login("admin", "test-password-1234", None, "9.9.9.9", "ua")
+    assert slept and slept[0] >= 0.5
