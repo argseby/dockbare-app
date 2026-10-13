@@ -150,6 +150,8 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
     def _load_session():
         g.session = core.auth.session_from_token(request.cookies.get(core.cookie_name))
 
+    _build_prefix = f"/static/{build_id()}/"
+
     @app.after_request
     def _headers(resp: Response):
         resp.headers["Content-Security-Policy"] = CSP
@@ -160,22 +162,37 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
         resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         if request.path.startswith("/api/") or request.path in ("/", "/login"):
             resp.headers["Cache-Control"] = "no-store"
-        elif request.path.startswith("/static/"):
-            resp.headers["Cache-Control"] = "no-cache"  # always revalidate (ETag) so updates show up immediately
+        elif request.path.startswith("/static/") and not request.path.startswith(_build_prefix):
+            resp.headers["Cache-Control"] = "no-cache"  # unversioned path: always revalidate
         if request.is_secure:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000"
         return resp
 
     app.register_blueprint(api, url_prefix="/api")
 
+    build = build_id()
+    static_prefix = f"/static/{build}/"
+
+    def page(name: str, status: int = 200) -> Response:
+        """Serve an HTML page with build-versioned asset URLs (immune to proxy/browser caching)."""
+        html = (STATIC_DIR / name).read_text(encoding="utf-8").replace('"/static/', '"' + static_prefix)
+        resp = Response(html, status=status, mimetype="text/html")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/static/<build_tag>/<path:filename>")
+    def versioned_static(build_tag, filename):
+        resp = send_from_directory(STATIC_DIR, filename, max_age=31536000)
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable" if build_tag == build else "no-cache"
+        return resp
+
     @app.get("/")
     def index():
-        page = "index.html" if g.get("session") else "login.html"
-        return send_from_directory(STATIC_DIR, page, max_age=0)
+        return page("index.html" if g.get("session") else "login.html")
 
     @app.get("/login")
     def login_page():
-        return send_from_directory(STATIC_DIR, "login.html", max_age=0)
+        return page("login.html")
 
     @app.get("/healthz")
     def healthz():
@@ -184,14 +201,14 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
     @app.get("/uptime")
     def uptime_page():
         if not core.uptime.settings().get("public_enabled"):
-            return send_from_directory(STATIC_DIR, "login.html", max_age=0), 404
-        return send_from_directory(STATIC_DIR, "uptime.html", max_age=0)
+            return page("login.html", 404)
+        return page("uptime.html")
 
     @app.errorhandler(404)
     def _404(_e):
         if request.path.startswith("/api/"):
             return jsonify({"error": "Not found"}), 404
-        return send_from_directory(STATIC_DIR, "index.html" if g.get("session") else "login.html", max_age=0), 404
+        return page("index.html" if g.get("session") else "login.html", 404)
 
     @app.errorhandler(413)
     def _413(_e):

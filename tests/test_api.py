@@ -273,3 +273,18 @@ def test_totp_env_locks_gui(auth_client, app):
     assert auth_client.get("/api/security").get_json()["totp"]["source"] == "env"
     assert auth_client.post("/api/security/totp/setup").status_code == 400
     assert auth_client.post("/api/security/totp/disable", json={"password": "test-password-1234", "code": "x"}).status_code == 400
+
+
+def test_versioned_static_assets(client, auth_client, app):
+    from dockbare import build_id
+
+    b = build_id()
+    html = app.test_client().get("/").data.decode()
+    assert f'"/static/{b}/app.js"' not in html and f'"/static/{b}/login.js"' in html  # login page for anonymous
+    html = auth_client.get("/").data.decode()
+    assert f'"/static/{b}/app.js"' in html and f'"/static/{b}/styles.css"' in html
+    r = client.get(f"/static/{b}/app.js")
+    assert r.status_code == 200 and "immutable" in r.headers["Cache-Control"]
+    r = client.get("/static/app.js")
+    assert r.status_code == 200 and r.headers["Cache-Control"] == "no-cache"
+    assert client.get(f"/static/{b}/../../etc/passwd").status_code in (404, 400)
