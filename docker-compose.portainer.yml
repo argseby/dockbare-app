@@ -13,7 +13,9 @@ services:
     build: .                                   # built from this repo by Portainer; or use image: <registry>/dockbare:3
     container_name: dockbare
     restart: unless-stopped
-    env_file: stack.env
+    env_file:
+      - path: stack.env
+        required: false
     environment:
       - DOCKBARE_BEHIND_PROXY=${DOCKBARE_BEHIND_PROXY:-true}
     volumes:

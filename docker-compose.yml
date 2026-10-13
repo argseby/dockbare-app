@@ -4,7 +4,11 @@ services:
     build: .
     container_name: dockbare
     restart: unless-stopped
-    env_file: .env          # Portainer git stacks: use "env_file: stack.env" and the stack's environment variables
+    env_file:               # .env for a local checkout, stack.env when deployed as a Portainer git stack
+      - path: .env
+        required: false
+      - path: stack.env
+        required: false
     ports:
       # Bind to localhost and put a TLS reverse proxy (Traefik, Caddy, nginx) in front.
       # Change to "5000:5000" only if you really want to expose it directly.
