@@ -599,3 +599,9 @@ html[data-theme="dark"] .st-status .chip { background: rgba(0,0,0,.25); border-c
 .estimate { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); }
 .estimate .icon { vertical-align: -3px; }
 .check-list .vsize { margin-left: auto; white-space: nowrap; }
+.quiet-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; background: var(--surface-2); }
+.quiet-row input[type=text] { flex: 1 1 160px; }
+.quiet-row input[type=time] { width: 110px; }
+.quiet-row select { width: 180px; }
+.quiet-row .qdays { display: inline-flex; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.quiet-row .qdays .check { gap: 3px; }

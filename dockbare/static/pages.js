@@ -362,17 +362,19 @@ export const schedules = {
   actions: () => `<button class="btn btn-primary" data-action="add">${icon("plus")} Add schedule</button>`,
   async render(el) {
     const seq = (this._seq = (this._seq || 0) + 1);
-    const [list] = await Promise.all([api.get("/api/schedules"), loadRemotes()]);
+    const [list, settings] = await Promise.all([api.get("/api/schedules"), api.get("/api/settings"), loadRemotes()]);
     state.schedules = list;
+    const encOn = settings.encryption.configured, encDefault = settings.general.encrypt_default;
+    const encBadge = (s) => { const wants = s.encrypt === true || (s.encrypt == null && encDefault); if (wants && encOn) return `<span class="badge ok" title="encrypted${s.encrypt == null ? " (default)" : ""}">${icon("lock", "sm")}</span>`; if (wants && !encOn) return `<span class="badge danger" title="Encryption requested but DOCKBARE_ENCRYPTION_KEY is not set: backups are written in plain text">${icon("unlock", "sm")} no key</span>`; return `<span class="badge warn" title="plain${s.encrypt == null ? " (default)" : ""}">${icon("unlock", "sm")}</span>`; };
     const rname = (id) => state.remotes.find((r) => r.id === id)?.name || "?";
     if (seq !== this._seq) return;
-    el.innerHTML = `<div class="card"><div class="card-c tight">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Volume</th><th>When</th><th>Retention</th><th>Remotes</th><th>Options</th><th>Next run</th><th></th></tr></thead><tbody>
+    el.innerHTML = `${!encOn && list.some((x) => x.encrypt === true || (x.encrypt == null && encDefault)) ? `<div class="banner danger">${icon("unlock")}<div><b>No encryption key configured.</b> Schedules set to encrypt will write plain backups until <code>DOCKBARE_ENCRYPTION_KEY</code> is set and the container restarted.</div></div>` : ""}<div class="card"><div class="card-c tight">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Volume</th><th>When</th><th>Retention</th><th>Remotes</th><th>Options</th><th>Next run</th><th></th></tr></thead><tbody>
       ${list.map((s) => `<tr>
         <td><div class="flex">${icon("box", "sm")} <b>${esc(s.volume)}</b></div></td>
         <td>${s.enabled ? `<span class="badge ok">${esc(s.interval_str)}</span>` : `<span class="badge outline">${icon("pause", "sm")} paused · ${esc(s.interval_str)}</span>`}</td>
         <td class="small">${s.keep_seconds ? `older than ${Math.round(s.keep_seconds / 86400)}d` : ""}${s.keep_seconds && s.keep_max ? ", " : ""}${s.keep_max ? `max ${s.keep_max}` : ""}${!s.keep_seconds && !s.keep_max ? `<span class="muted">keep all</span>` : ""}${s.prune_remote && (s.keep_seconds || s.keep_max) ? `<div class="muted">+ remotes</div>` : ""}</td>
         <td><div class="pills">${s.remotes.length ? s.remotes.map((id) => `<span class="badge">${esc(rname(id))}</span>`).join("") : `<span class="muted small">local only</span>`}</div></td>
-        <td><div class="pills">${s.encrypt === true || (s.encrypt == null && state.overview?.encryption?.default && state.overview?.encryption?.configured) ? `<span class="badge ok" title="encrypted">${icon("lock", "sm")}</span>` : `<span class="badge warn" title="plain">${icon("unlock", "sm")}</span>`}${s.stop_containers ? `<span class="badge outline" title="stops containers">${icon("container", "sm")}</span>` : ""}${s.notify ? `<span class="badge outline" title="notifications">${icon("bell", "sm")}</span>` : ""}</div></td>
+        <td><div class="pills">${encBadge(s)}${s.stop_containers ? `<span class="badge outline" title="stops containers">${icon("container", "sm")}</span>` : ""}${s.notify ? `<span class="badge outline" title="notifications">${icon("bell", "sm")}</span>` : ""}</div></td>
         <td>${s.enabled && s.next_run ? `<div>${esc(ago(s.next_run))}</div><div class="muted small">${esc(fmtTime(s.next_run))}</div>` : `<span class="muted">—</span>`}</td>
         <td><div class="actions">
           <button class="btn btn-sm btn-ghost btn-icon" data-action="run" data-vol="${esc(s.volume)}" title="Run now">${icon("play")}</button>

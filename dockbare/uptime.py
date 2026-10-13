@@ -33,6 +33,11 @@ MONITOR_DEFAULTS = {
 SETTINGS_DEFAULTS = {
     "poll_seconds": 15,
     "monitor_new": True,
+    "notify_down": True,
+    "notify_recovery": True,
+    "notify_restart": True,
+    "default_grace_seconds": 30,
+    "quiet_windows": [],  # [{"days": [0..6], "start": "02:00", "end": "03:00", "mode": "mute" | "ignore"}]
     "public_enabled": False,
     "public_title": "Service status",
     "public_group_name": "",
@@ -78,6 +83,23 @@ class Uptime:
         s["poll_seconds"] = max(5, min(600, int(s.get("poll_seconds") or 15)))
         s["incident_keep_days"] = max(7, min(3650, int(s.get("incident_keep_days") or 365)))
         s["public_title"] = str(s.get("public_title") or "Service status")[:80]
+        for b in ("notify_down", "notify_recovery", "notify_restart"):
+            s[b] = bool(s.get(b, True))
+        s["default_grace_seconds"] = max(0, min(3600, int(s.get("default_grace_seconds") or 30)))
+        wins = []
+        for w in (s.get("quiet_windows") or [])[:20]:
+            if not isinstance(w, dict):
+                continue
+            try:
+                sh, sm = [int(x) for x in str(w.get("start") or "00:00").split(":")]
+                eh, em = [int(x) for x in str(w.get("end") or "00:00").split(":")]
+                assert 0 <= sh < 24 and 0 <= eh < 24 and 0 <= sm < 60 and 0 <= em < 60
+            except Exception as e:  # noqa: BLE001
+                raise ManagerError("Quiet window times must be HH:MM.") from e
+            days = sorted({int(d) for d in (w.get("days") or []) if 0 <= int(d) <= 6}) or list(range(7))
+            wins.append({"days": days, "start": f"{sh:02d}:{sm:02d}", "end": f"{eh:02d}:{em:02d}",
+                         "mode": "ignore" if w.get("mode") == "ignore" else "mute", "label": str(w.get("label") or "")[:60]})
+        s["quiet_windows"] = wins
         s["public_group_name"] = str(s.get("public_group_name") or "").strip()[:80]
         for b in ("monitor_new", "public_enabled", "public_show_peers"):
             s[b] = bool(s.get(b))
@@ -101,10 +123,39 @@ class Uptime:
         explicit = self.monitors() if explicit is None else explicit
         if name in explicit:
             return {**explicit[name], "explicit": True}
+        st = self.settings()
         cfg = dict(MONITOR_DEFAULTS)
-        cfg["enabled"] = bool(self.settings().get("monitor_new", True))
+        cfg["enabled"] = bool(st.get("monitor_new", True))
+        cfg["grace_seconds"] = int(st.get("default_grace_seconds", 30))
         cfg["explicit"] = False
         return cfg
+
+    def quiet_window(self, now: float | None = None) -> dict | None:
+        """The quiet window active right now (in the configured time zone), if any."""
+        wins = self.settings().get("quiet_windows") or []
+        if not wins:
+            return None
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        try:
+            tz = ZoneInfo(self.m.settings.timezone)
+        except Exception:  # noqa: BLE001
+            tz = None
+        dt = datetime.fromtimestamp(now or time.time(), tz)
+        minutes = dt.hour * 60 + dt.minute
+        today, yesterday = dt.weekday(), (dt.weekday() - 1) % 7
+        for w in wins:
+            sh, sm = [int(x) for x in w["start"].split(":")]
+            eh, em = [int(x) for x in w["end"].split(":")]
+            start, end = sh * 60 + sm, eh * 60 + em
+            if start <= end:
+                if today in w["days"] and start <= minutes < end:
+                    return w
+            else:  # crosses midnight, e.g. 23:00-02:00
+                if (today in w["days"] and minutes >= start) or (yesterday in w["days"] and minutes < end):
+                    return w
+        return None
 
     def save_monitor(self, name: str, data: dict) -> dict:
         if not CONTAINER_RE.match(name or ""):
@@ -217,6 +268,7 @@ class Uptime:
             open_incidents = {i["container"]: i for i in self.incidents(open_only=True)}
             first_seen = {r["name"]: r["first_seen"] for r in self.m.db.query("SELECT name, first_seen FROM container_seen")}
             maint = self.maintenance_active(now)
+            quiet = self.quiet_window(now)
             snapshot: dict[str, dict] = {}
             seen: set[str] = set()
             for c in containers:
@@ -242,6 +294,10 @@ class Uptime:
                     c["maintenance"] = next(mw["title"] for mw in maint if self._covers(mw, name))
                     self._failing_since.pop(name, None)
                     kind = None
+                if kind and name not in open_incidents and quiet and quiet["mode"] == "ignore":
+                    c["maintenance"] = quiet.get("label") or f"quiet hours {quiet['start']}–{quiet['end']}"
+                    self._failing_since.pop(name, None)
+                    kind = None
                 if kind in ("down", "dead", "unhealthy"):
                     info = self.m.docker.inspect_container(c["id"]) or {}
                     c.update({k: info.get(k) for k in ("oom_killed", "restart_count", "finished_at", "error", "health_log", "restart_policy")})
@@ -255,7 +311,7 @@ class Uptime:
                     since = self._failing_since.setdefault(name, now)
                     c["failing_for"] = now - since
                     if inc is None and now - since >= cfg["grace_seconds"]:
-                        inc = self._open_incident(c, kind, cfg, now)
+                        inc = self._open_incident(c, kind, cfg, now, muted=bool(quiet and quiet["mode"] == "mute"))
                     elif inc is not None and inc["kind"] != kind:
                         self.m.db.execute("UPDATE incidents SET kind=?, detail=? WHERE id=?", (kind, self._detail(c, kind), inc["id"]))
                     if inc is not None and cfg["auto_restart"] and kind in ("down", "dead", "unhealthy", "oom"):
@@ -330,15 +386,15 @@ class Uptime:
             bits.append("health check: " + detail["health"])
         return "; ".join(bits) or detail.get("kind", "")
 
-    def _open_incident(self, c: dict, kind: str, cfg: dict, now: float) -> dict:
+    def _open_incident(self, c: dict, kind: str, cfg: dict, now: float, muted: bool = False) -> dict:
         detail = self._detail(c, kind)
         cur = self.m.db.execute("INSERT INTO incidents(container, kind, started_at, detail, actions) VALUES(?,?,?,?,?)",
                                 (c["name"], kind, self._failing_since.get(c["name"], now), detail, "[]"))
         inc = {"id": cur.lastrowid, "container": c["name"], "kind": kind, "started_at": self._failing_since.get(c["name"], now), "ended_at": None, "detail": detail, "actions": []}
         label = {"down": "exited", "dead": "dead", "oom": "killed (out of memory)", "unhealthy": "unhealthy", "restart-loop": "stuck in a restart loop", "missing": "missing"}.get(kind, kind)
         msg = f"Container '{c['name']}' is {label}" + (f": {self.detail_text(detail)}" if self.detail_text(detail) else "")
-        self.m.event("error", "uptime.down", msg, data={"container": c["name"], "kind": kind, "incident": inc["id"]})
-        if cfg.get("notify", True):
+        self.m.event("error", "uptime.down", msg + (" (quiet hours: not notified)" if muted else ""), data={"container": c["name"], "kind": kind, "incident": inc["id"], "muted": muted})
+        if cfg.get("notify", True) and self.settings().get("notify_down", True) and not muted:
             self.m.notifier.notify("uptime", f"DOWN: {c['name']}", msg, "error")
         return inc
 
@@ -347,7 +403,7 @@ class Uptime:
         dur = now - inc["started_at"]
         msg = f"Container '{inc['container']}' recovered after {_fmt_dur(dur)}" + (f" ({note})" if note else "")
         self.m.event("success", "uptime.up", msg, data={"container": inc["container"], "incident": inc["id"], "duration": dur})
-        if cfg.get("notify", True) and not note:
+        if cfg.get("notify", True) and not note and self.settings().get("notify_recovery", True) and not self.quiet_window(now):
             self.m.notifier.notify("uptime", f"UP: {inc['container']}", msg, "success")
 
     def _maybe_restart(self, c: dict, cfg: dict, inc: dict, now: float) -> None:
@@ -364,7 +420,7 @@ class Uptime:
                 inc["actions"] = actions
                 msg = f"Container '{name}' keeps failing; restart budget of {cfg['max_restarts']} per {cfg['restart_window_minutes']} min exhausted. Manual action needed."
                 self.m.event("error", "uptime.restart_budget", msg, data={"container": name})
-                if cfg.get("notify", True):
+                if cfg.get("notify", True) and self.settings().get("notify_restart", True):
                     self.m.notifier.notify("uptime", f"GIVING UP: {name}", msg, "error")
             return
         ok = self.m.docker.restart_container(c["id"]) if c.get("id") else False
@@ -374,7 +430,7 @@ class Uptime:
         self.m.db.execute("UPDATE incidents SET actions=? WHERE id=?", (json.dumps(actions), inc["id"]))
         inc["actions"] = actions
         self.m.event("warning" if ok else "error", "uptime.restarted", f"Auto-restarted '{name}' ({len(hist)}/{cfg['max_restarts']} in window)" if ok else f"Auto-restart of '{name}' failed", data={"container": name})
-        if cfg.get("notify", True):
+        if cfg.get("notify", True) and self.settings().get("notify_restart", True):
             self.m.notifier.notify("uptime", f"Restarted: {name}", f"Dockbare restarted '{name}' automatically ({len(hist)}/{cfg['max_restarts']} in {cfg['restart_window_minutes']} min). Reason: {inc.get('detail')}", "warning")
 
     def restart_now(self, name: str) -> bool:
@@ -482,7 +538,9 @@ class Uptime:
         monitored = [n for n, c in snap.items() if c.get("monitored")]
         since = time.time() - 86400
         inc24 = self.m.db.one("SELECT COUNT(*) AS n FROM incidents WHERE started_at >= ? OR ended_at >= ?", (since, since))["n"]
+        q = self.quiet_window()
         return {"monitored": len(monitored), "total": len(snap), "down": down, "incidents_24h": int(inc24), "last_poll": self.last_poll, "error": self.last_error,
+                "quiet": ({"label": q.get("label") or f"{q['start']}–{q['end']}", "mode": q["mode"]} if q else None),
                 "public_items": self.public_items(), "announcements": [a for a in self.public_announcements() if a["active"] or a["upcoming"]],
                 "public_group_name": self.public_group_name()}
 

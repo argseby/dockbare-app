@@ -637,3 +637,36 @@ def test_public_group_name(uptime_app, monkeypatch):
     core.db.set_setting("instance_name", "dockbare-ab12")
     c.put("/api/uptime/settings", json={"public_group_name": ""})
     assert anon.get("/api/uptime/public").get_json()["groups"][0]["name"] == "This site"
+
+
+def test_quiet_windows_and_notification_toggles(uptime_app, monkeypatch):
+    import time as _t
+    from datetime import datetime, timezone
+
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    sent = []
+    monkeypatch.setattr(core.manager.notifier, "notify", lambda event, title, msg, level="info", **kw: sent.append(title))
+    up = core.uptime
+    # a quiet window covering "now" in the configured time zone (UTC in tests)
+    now = datetime.fromtimestamp(_t.time(), timezone.utc)
+    start = f"{now.hour:02d}:00"; end = f"{(now.hour + 1) % 24:02d}:00"
+    r = c.put("/api/uptime/settings", json={"quiet_windows": [{"days": list(range(7)), "start": start, "end": end, "mode": "mute", "label": "test"}], "default_grace_seconds": 0})
+    assert r.status_code == 200 and r.get_json()["quiet_windows"][0]["mode"] == "mute"
+    assert up.quiet_window()["label"] == "test"
+    c.put("/api/uptime/monitors/db", json={"grace_seconds": 0})
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1})
+    up.poll()
+    inc = up.incidents(open_only=True)
+    assert len(inc) == 1 and not sent  # recorded, not notified
+    assert c.get("/api/uptime").get_json()["summary"]["quiet"]["mode"] == "mute"
+    # ignore mode: outage is treated as planned
+    d.containers["db"].update({"state": "running", "status": "Up", "exit_code": None}); up.poll()
+    c.put("/api/uptime/settings", json={"quiet_windows": [{"days": list(range(7)), "start": start, "end": end, "mode": "ignore"}]})
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1}); up.poll()
+    assert up.incidents(open_only=True) == [] and up.rows()[0]["name"] == "db" and up.rows()[0]["maintenance"]
+    # outside any window, with notifications switched off globally
+    c.put("/api/uptime/settings", json={"quiet_windows": [], "notify_down": False})
+    up.poll()
+    assert len(up.incidents(open_only=True)) == 1 and not sent
+    assert c.put("/api/uptime/settings", json={"quiet_windows": [{"start": "25:00", "end": "26:00"}]}).status_code == 400

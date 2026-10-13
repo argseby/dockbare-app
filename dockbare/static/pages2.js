@@ -499,7 +499,7 @@ export const uptime = {
   actions: () => `<a class="btn" href="/uptime" target="_blank" rel="noopener" data-public-link title="Enable it under Settings on this page first">${icon("globe")} Public page</a><button class="btn" data-action="poll">${icon("refresh")} Check now</button>`,
   async render(el) {
     const seq = (this._seq = (this._seq || 0) + 1);
-    const d = await api.get("/api/uptime");
+    const [d, settings] = await Promise.all([api.get("/api/uptime"), api.get("/api/settings")]);
     const s = d.settings, sum = d.summary;
     const rows = d.containers;
     const open = d.incidents.filter((i) => !i.ended_at), closed = d.incidents.filter((i) => i.ended_at);
@@ -546,7 +546,12 @@ export const uptime = {
       <div class="grid cols-2">
         <div class="card"><div class="card-h"><h2>Settings</h2></div><div class="card-c">
           <div class="form-row"><div><label class="field">Check interval (seconds)</label><input type="number" name="poll_seconds" min="5" max="600" value="${s.poll_seconds}"></div><div><label class="field">Keep incidents (days)</label><input type="number" name="incident_keep_days" min="7" value="${s.incident_keep_days}"></div></div>
-          <div class="stack gap-2 mt">${switchHtml("monitor_new", s.monitor_new, "Monitor every container by default (defaults: notify, no auto-restart)")}${switchHtml("public_enabled", s.public_enabled, "Enable the public status page at /uptime (no login)")}${switchHtml("public_show_peers", s.public_show_peers, "Include peers and their public services on it")}</div>
+          <div class="form-row mt"><div><label class="field">Default grace period (s)</label><input type="number" name="default_grace_seconds" min="0" max="3600" value="${s.default_grace_seconds}"><div class="help">How long a container may be down before it counts as an outage (per-container settings override).</div></div></div>
+          <div class="stack gap-2 mt">${switchHtml("monitor_new", s.monitor_new, "Monitor every container by default (defaults: notify, no auto-restart)")}${switchHtml("notify_down", s.notify_down, "Notify when a container goes down")}${switchHtml("notify_recovery", s.notify_recovery, "Notify when it recovers")}${switchHtml("notify_restart", s.notify_restart, "Notify about automatic restarts")}${switchHtml("public_enabled", s.public_enabled, "Enable the public status page at /uptime (no login)")}${switchHtml("public_show_peers", s.public_show_peers, "Include peers and their public services on it")}</div>
+          <div class="form-group mt"><label class="field">Quiet windows (planned downtime)</label>
+            <div class="help mb">During a quiet window, <b>mute</b> records outages without notifying; <b>ignore</b> treats them as planned (no incident, no downtime), like a recurring maintenance window. Times in ${esc(settings.env.timezone)}.${sum.quiet ? ` <span class="badge info">${icon("moon", "sm")} active now: ${esc(sum.quiet.label)} (${esc(sum.quiet.mode)})</span>` : ""}</div>
+            <div data-quiet>${(s.quiet_windows || []).map((w, i) => quietRow(w, i)).join("")}</div>
+            <button type="button" class="btn btn-sm" data-action="addQuiet">${icon("plus")} Add window</button></div>
           <div class="form-row mt"><div><label class="field">Public page title</label><input type="text" name="public_title" value="${esc(s.public_title)}"></div><div><label class="field">Name of this site on the page</label><input type="text" name="public_group_name" value="${esc(s.public_group_name || "")}" placeholder="${esc(sum.public_group_name || "This site")}"><div class="help">Heading of this instance's service group; peers show it too. Empty = instance name.</div></div></div>
           <div class="help mb">Docker events trigger an immediate check; the interval is the fallback. Containers mark as public in their monitor settings.</div>
           <button class="btn btn-primary" data-action="save">${icon("check")} Save</button></div></div>
@@ -567,7 +572,9 @@ export const uptime = {
       editUpd: (b) => { const a = d.announcements.find((x) => x.id === Number(b.dataset.id)); const u = a.updates.find((x) => x.id === Number(b.dataset.uid)); editUpdateDialog(a, u).then((ch) => ch && this.render(el)); },
       edit: (b) => monitorDialog(rows.find((r) => r.name === b.dataset.name), defaults).then((ch) => ch && this.render(el)),
       restart: async (b) => { if (!(await confirmDialog({ title: "Restart container", text: `Restart <b>${esc(b.dataset.name)}</b> now?`, confirmLabel: "Restart" }))) return; try { await api.post(`/api/uptime/containers/${encodeURIComponent(b.dataset.name)}/restart`, {}); toast("Restart requested", "success"); setTimeout(() => this.render(el), 2500); } catch (e) { toast(e.message, "error"); } },
-      save: async (b) => { await busy(b, async () => { await api.put("/api/uptime/settings", formValues(el)); toast("Uptime settings saved", "success"); this.render(el); }).catch((e) => toast(e.message, "error")); },
+      save: async (b) => { const f = formValues(el); const quiet_windows = $$("[data-quiet] .quiet-row", el).map((r) => ({ label: $("[name=q_label]", r).value, start: $("[name=q_start]", r).value, end: $("[name=q_end]", r).value, mode: $("[name=q_mode]", r).value, days: $$("input[name=q_days]:checked", r).map((i) => Number(i.value)) })); await busy(b, async () => { await api.put("/api/uptime/settings", { ...f, quiet_windows }); toast("Uptime settings saved", "success"); this.render(el); }).catch((e) => toast(e.message, "error")); },
+      addQuiet: () => { $("[data-quiet]", el).insertAdjacentHTML("beforeend", quietRow({ days: [0, 1, 2, 3, 4, 5, 6], start: "02:00", end: "03:00", mode: "mute", label: "" }, Date.now())); bind(el, { rmQuiet: (b) => b.closest(".quiet-row").remove() }); },
+      rmQuiet: (b) => b.closest(".quiet-row").remove(),
     });
   },
   onAction: { poll: async (b, ctx) => { await api.post("/api/uptime/poll", {}); ctx.refresh(); } },
@@ -629,4 +636,10 @@ function editUpdateDialog(a, u) {
       del: async (b) => { await busy(b, async () => { await api.del(`/api/uptime/announcements/${a.id}/updates/${u.id}`); toast("Update deleted", "success"); resolve(true); m.close(); }).catch((e) => toast(e.message, "error")); },
     });
   });
+}
+
+
+function quietRow(w, i) {
+  const days = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  return `<div class="quiet-row"><input type="text" name="q_label" value="${esc(w.label || "")}" placeholder="Label (e.g. nightly reboot)"><input type="time" name="q_start" value="${esc(w.start)}"><span class="muted">→</span><input type="time" name="q_end" value="${esc(w.end)}"><select name="q_mode"><option value="mute" ${w.mode === "mute" ? "selected" : ""}>mute notifications</option><option value="ignore" ${w.mode === "ignore" ? "selected" : ""}>ignore outages</option></select><span class="qdays">${days.map((d, k) => `<label class="check"><input type="checkbox" name="q_days" value="${k}" ${(w.days || []).includes(k) ? "checked" : ""}>${d}</label>`).join("")}</span><button type="button" class="btn btn-sm btn-ghost btn-icon" data-action="rmQuiet" title="Remove">${icon("x")}</button></div>`;
 }
