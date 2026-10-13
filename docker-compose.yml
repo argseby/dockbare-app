@@ -16,8 +16,11 @@ services:
       # (127.0.0.1 = only via a reverse proxy on this machine, 0.0.0.0 = exposed directly).
       - "${DOCKBARE_BIND:-127.0.0.1}:${DOCKBARE_PORT:-5000}:${DOCKBARE_PORT:-5000}"
     volumes:
-      - ./backups:/backups    # use absolute host paths under Portainer
-      - ./data:/data
+      # Portainer git stacks: SET THESE TO ABSOLUTE HOST PATHS (DOCKBARE_BACKUPS_PATH / DOCKBARE_DATA_PATH).
+      # A relative ./data lives inside the git checkout, which is a new directory on every update,
+      # so the database (remotes, schedules, 2FA, monitors) would start empty after each redeploy.
+      - ${DOCKBARE_BACKUPS_PATH:-./backups}:/backups
+      - ${DOCKBARE_DATA_PATH:-./data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - TZ=${TZ:-UTC}

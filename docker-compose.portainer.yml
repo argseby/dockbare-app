@@ -4,8 +4,7 @@
 #
 #   PROXY_NETWORK          existing proxy-network network to join      (default: proxy-network)
 #   DOCKBARE_HOST          public host name for the Traefik labels     (default: backup.example.com)
-#   DOCKBARE_BACKUPS_PATH  host directory for the archives             (default: /srv/dockbare/backups)
-#   DOCKBARE_DATA_PATH     host directory for database/logs/snapshots  (default: /srv/dockbare/data)
+#   DOCKBARE_DATA_VOLUME / DOCKBARE_BACKUPS_VOLUME   names of the Docker volumes (defaults: dockbare_data / dockbare_backups)
 #   TRAEFIK_ENTRYPOINT / TRAEFIK_CERTRESOLVER   (defaults: websecure / letsencrypt)
 # plus the application variables from .env.example (DOCKBARE_ADMIN_PASSWORD, keys, ...).
 services:
@@ -21,8 +20,12 @@ services:
     environment:
       - DOCKBARE_BEHIND_PROXY=${DOCKBARE_BEHIND_PROXY:-true}
     volumes:
-      - ${DOCKBARE_BACKUPS_PATH:-/srv/dockbare/backups}:/backups
-      - ${DOCKBARE_DATA_PATH:-/srv/dockbare/data}:/data
+      # Named Docker volumes: survive every stack update/redeploy regardless of where the checkout lives.
+      # Prefer host directories instead? Replace the two lines with absolute paths, e.g.
+      #   - /srv/dockbare/backups:/backups
+      #   - /srv/dockbare/data:/data
+      - dockbare_backups:/backups
+      - dockbare_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - proxy
@@ -41,3 +44,14 @@ networks:
   proxy:
     external: true
     name: ${PROXY_NETWORK:-proxy-network}
+
+volumes:
+  # Fixed names (not prefixed with the stack name) so the data is easy to find and reuse.
+  dockbare_data:
+    name: ${DOCKBARE_DATA_VOLUME:-dockbare_data}
+    labels:
+      dev.dockbare.internal: "1"
+  dockbare_backups:
+    name: ${DOCKBARE_BACKUPS_VOLUME:-dockbare_backups}
+    labels:
+      dev.dockbare.internal: "1"

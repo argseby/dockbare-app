@@ -23,6 +23,7 @@ log = logging.getLogger("dockbare.docker")
 
 VOLUME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 HELPER_LABEL = "dev.dockbare.helper"
+INTERNAL_LABEL = "dev.dockbare.internal"
 FALLBACK_IMAGE = "alpine:3.20"
 DATA_MOUNT = "/data"
 
@@ -107,6 +108,8 @@ class DockerCtl:
         for v in vols:
             a = v.attrs or {}
             labels = a.get("Labels") or {}
+            if labels.get(INTERNAL_LABEL):
+                continue  # Dockbare's own data/backups volumes
             out.append({
                 "name": v.name,
                 "driver": a.get("Driver"),
@@ -122,7 +125,7 @@ class DockerCtl:
 
     def volume_names(self) -> set[str]:
         try:
-            return {v.name for v in self.client.volumes.list()}
+            return {v.name for v in self.client.volumes.list() if not ((v.attrs or {}).get("Labels") or {}).get(INTERNAL_LABEL)}
         except DockerException as e:
             raise DockerError(f"Cannot list volumes: {e}") from e
 

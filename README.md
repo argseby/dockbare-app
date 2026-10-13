@@ -56,9 +56,12 @@ And **keep `DOCKBARE_ENCRYPTION_KEY` somewhere safe**; without it the encrypted 
 
 Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as the compose path of a git stack. It
 reads everything from the stack's *Environment variables* (Portainer writes them to `stack.env`): the app
-settings from `.env.example` plus `PROXY_NETWORK` (your reverse-proxy network), `DOCKBARE_HOST` (for the
-Traefik labels) and `DOCKBARE_BACKUPS_PATH` / `DOCKBARE_DATA_PATH` (absolute host directories, so a
-redeploy finds the same archives). Portainer builds the image from the repository on every stack update
+settings from `.env.example` plus `PROXY_NETWORK` (your reverse-proxy network) and `DOCKBARE_HOST` (for
+the Traefik labels). Data and archives go into the named Docker volumes `dockbare_data` and
+`dockbare_backups`, which survive every stack update. (Never use relative `./data` paths in a git stack:
+each update checks out into a new directory and the database would start empty; the dashboard warns
+when that happens.) To keep the archives in a host directory instead, replace the two volume lines with
+absolute paths. Portainer builds the image from the repository on every stack update
 (`pull_policy: build`); leave Portainer's "re-pull image" option off, there is nothing to pull.
 `/api/health` shows the `build` fingerprint so you can see which version is actually running.
 

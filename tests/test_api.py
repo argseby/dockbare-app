@@ -315,3 +315,9 @@ def test_estimate_and_forecast(auth_client, app, fake_docker, monkeypatch):
     auth_client.post("/api/schedules", json={"volume": "vol1", "mode": "interval", "interval_seconds": 86400, "keep_max": 5})
     f = auth_client.get("/api/overview").get_json()["forecast"]
     assert f["days"] == 30 and f["projected"] >= f["current"] and f["unknown"] == []
+
+
+def test_fresh_database_warning(auth_client, app):
+    o = auth_client.get("/api/overview").get_json()
+    assert any("empty" in w and "Recovery" in w for w in o["security"])
+    assert any(e["kind"] == "app.fresh_database" for e in auth_client.get("/api/events").get_json())

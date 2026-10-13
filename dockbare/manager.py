@@ -75,6 +75,9 @@ class Manager:
 
     # ------------------------------------------------------------------ start
     def start(self) -> None:
+        if self.db.get_setting("first_start_at") is None:
+            self.db.set_setting("first_start_at", time.time())
+            self.event("warning", "app.fresh_database", f"Fresh database created in {self.settings.data_dir}")
         self.migrate_legacy()
         self.sync_env_remotes()
         self.docker.cleanup_helpers()
@@ -1161,6 +1164,9 @@ class Manager:
 
     def security_warnings(self) -> list[str]:
         out = []
+        first = self.db.get_setting("first_start_at")
+        if first and time.time() - float(first) < 7 * 86400 and not self.list_remotes() and not self.list_schedules():
+            out.append(f"This database was created {time.strftime('%Y-%m-%d %H:%M', time.localtime(float(first)))} and is empty. If you had configuration before, the /data mount changed (Portainer: use absolute host paths for DOCKBARE_DATA_PATH and DOCKBARE_BACKUPS_PATH). Restore it via Recovery → configuration snapshot.")
         auth = getattr(self, "auth", None)
         if auth is not None and getattr(auth, "weak_password", None):
             out.append(f"Weak admin login: {auth.weak_password}. Set a long random DOCKBARE_ADMIN_PASSWORD.")
