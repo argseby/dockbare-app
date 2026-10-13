@@ -374,7 +374,9 @@ def test_uptime_public_page(uptime_app, monkeypatch):
     core = app.extensions["dockbare"]
     monkeypatch.setattr(core.manager.notifier, "notify", lambda *a, **k: None)
     anon = app.test_client()
-    assert anon.get("/api/uptime/public").status_code == 404 and anon.get("/uptime").status_code == 404
+    assert anon.get("/api/uptime/public").status_code == 404
+    r = anon.get("/uptime")
+    assert r.status_code == 404 and b"not enabled" in r.data and b"login.js" not in r.data
     c.put("/api/uptime/settings", json={"public_enabled": True, "public_title": "My services"})
     c.put("/api/uptime/monitors/web", json={"public": True, "display_name": "Website"})
     r = anon.get("/api/uptime/public")
@@ -617,3 +619,21 @@ def test_edit_update_changes_status(uptime_app, monkeypatch):
     # deleting the newest update rolls the status back to the previous entry
     e = c.delete(f"/api/uptime/announcements/{a['id']}/updates/{uid}").get_json()
     assert e["status"] == "investigating" and len(e["updates"]) == 1
+
+
+def test_public_group_name(uptime_app, monkeypatch):
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    monkeypatch.setattr(core.manager.notifier, "notify", lambda *a, **k: None)
+    core.settings.instance_name = "hetzner-box"
+    c.put("/api/uptime/settings", json={"public_enabled": True})
+    anon = app.test_client()
+    assert anon.get("/api/uptime/public").get_json()["groups"][0]["name"] == "hetzner-box"
+    c.put("/api/uptime/settings", json={"public_group_name": "Home lab"})
+    assert anon.get("/api/uptime/public").get_json()["groups"][0]["name"] == "Home lab"
+    st = anon.get("/api/peer/status", headers={"Authorization": f"Bearer {core.peers.token()}"}).get_json()
+    assert st["uptime"]["public_group_name"] == "Home lab"
+    core.settings.instance_name = None
+    core.db.set_setting("instance_name", "dockbare-ab12")
+    c.put("/api/uptime/settings", json={"public_group_name": ""})
+    assert anon.get("/api/uptime/public").get_json()["groups"][0]["name"] == "This site"

@@ -1,5 +1,5 @@
 // Pages: dashboard, volumes & backups, schedules (+ shared backup / restore / prune dialogs)
-import { $, $$, esc, icon, api, toast, modal, confirmDialog, taskLogModal, fmtBytes, fmtTime, ago, dur, timeEl, bind, formValues, busy, switchHtml, emptyState, downloadUrl, applyWidths, progressPct, progressText, statusBadge, remoteBadge, sparkline, copyText, fileInput } from "./ui.js";
+import { $, $$, esc, icon, api, toast, modal, confirmDialog, taskLogModal, fmtBytes, fmtTime, ago, dur, timeEl, bind, formValues, busy, switchHtml, emptyState, downloadUrl, applyWidths, progressPct, progressText, statusBadge, remoteBadge, sparkline, copyText, fileInput, keepFocus } from "./ui.js";
 
 const isAnonVol = (v) => /^[0-9a-f]{64}$/.test(v.name);
 export const sortVolumes = (vols) => [...vols].sort((a, b) => (isAnonVol(a) - isAnonVol(b)) || a.name.localeCompare(b.name));
@@ -24,6 +24,7 @@ export async function backupDialog(preselect = []) {
       <div class="search mb">${icon("search", "sm")}<input type="search" placeholder="Filter volumes…" data-action="filter"></div>
       <div class="check-list" data-vols>${vols.map((v) => `<label class="check" data-name="${esc(v.name.toLowerCase())}"><input type="checkbox" name="volumes" data-multi="1" value="${esc(v.name)}" ${preselect.includes(v.name) ? "checked" : ""}> <span class="ellipsis">${esc(v.name)}</span> ${v.containers.length ? `<span class="muted small">${esc(v.containers.map((c) => c.name).join(", "))}</span>` : ""}</label>`).join("")}</div>
       <div class="flex small mt"><a href="#" data-action="all">Select all</a> · <a href="#" data-action="none">None</a> <span class="muted grow right" data-count></span></div>
+      <div class="estimate small mt" data-estimate></div>
     </div>
     <div class="form-group"><label class="field">Upload to remotes</label>${remoteCheckList(state.remotes.filter((r) => r.enabled).map((r) => r.id))}</div>
     <div class="form-row">
@@ -33,7 +34,24 @@ export async function backupDialog(preselect = []) {
       <div><label class="field">Containers</label>${switchHtml("stop_containers", true, "Stop containers during backup")}<div class="help">Guarantees a consistent snapshot.</div></div>
     </div>`;
   const m = modal({ title: "Create backup", body, size: "wide", footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-action="go">${icon("play")} Start backup</button>` });
-  const count = () => { $("[data-count]", m.el).textContent = `${$$("input[name=volumes]:checked", m.el).length} selected`; };
+  const sizes = {};
+  let estTimer = null;
+  const estimate = async () => {
+    const sel = $$("input[name=volumes]:checked", m.el).map((i) => i.value);
+    const box = $("[data-estimate]", m.el);
+    if (!sel.length) { box.innerHTML = ""; return; }
+    const missing = sel.filter((v) => !(v in sizes)).slice(0, 25);
+    if (missing.length) {
+      box.innerHTML = `${icon("loader", "spin sm")} measuring ${missing.length} volume(s)…`;
+      try { const r = await api.get(`/api/volumes/estimate?volumes=${encodeURIComponent(missing.join(","))}`); r.items.forEach((it) => (sizes[it.volume] = it)); } catch (e) { box.innerHTML = `<span class="danger">${esc(e.message)}</span>`; return; }
+    }
+    const rows = sel.map((v) => sizes[v]).filter(Boolean);
+    const raw = rows.reduce((a, r) => a + (r.bytes || 0), 0), est = rows.reduce((a, r) => a + (r.estimated || 0), 0);
+    const unknown = rows.filter((r) => r.bytes == null).length;
+    box.innerHTML = `${icon("hard-drive", "sm")} <b>${esc(fmtBytes(raw))}</b> of data in ${sel.length} volume(s) → about <b>${esc(fmtBytes(est))}</b> per backup${unknown ? ` <span class="muted">(${unknown} could not be measured)</span>` : ""} <span class="muted">· compression from ${rows.some((r) => r.ratio_source === "history") ? "your previous backups" : "a default 60% ratio"}</span>`;
+    $$("[data-vols] label", m.el).forEach((l) => { const v = l.querySelector("input").value; const sz = sizes[v]; const tag = l.querySelector(".vsize") || l.appendChild(Object.assign(document.createElement("span"), { className: "muted small vsize" })); tag.textContent = sz ? (sz.bytes == null ? "?" : `${fmtBytes(sz.bytes)} → ~${fmtBytes(sz.estimated)}`) : ""; });
+  };
+  const count = () => { $("[data-count]", m.el).textContent = `${$$("input[name=volumes]:checked", m.el).length} selected`; clearTimeout(estTimer); estTimer = setTimeout(estimate, 300); };
   bind(m.el, {
     filter: (el) => { const q = el.value.toLowerCase(); $$("[data-vols] label", m.el).forEach((l) => l.classList.toggle("hidden", !l.dataset.name.includes(q))); },
     all: () => { $$("[data-vols] label:not(.hidden) input", m.el).forEach((i) => (i.checked = true)); count(); },
@@ -186,7 +204,7 @@ export const dashboard = {
     el.innerHTML = `${banners.join("")}
       <div class="grid cols-5 mb">
         <div class="card stat"><div class="label">${icon("box", "sm")} Volumes protected</div><div class="value">${o.volumes.protected} <span class="muted">/ ${o.volumes.total}</span></div><div class="sub">${o.volumes.scheduled} scheduled</div></div>
-        <div class="card stat"><div class="label">${icon("hard-drive", "sm")} Backups</div><div class="value">${o.backups.count}</div><div class="sub">${esc(fmtBytes(o.backups.bytes))} on disk${o.disk.free != null ? ` · ${esc(fmtBytes(o.disk.free))} free` : ""}</div></div>
+        <div class="card stat"><div class="label">${icon("hard-drive", "sm")} Backups</div><div class="value">${o.backups.count}</div><div class="sub">${esc(fmtBytes(o.backups.bytes))} on disk${o.disk.free != null ? ` · ${esc(fmtBytes(o.disk.free))} free` : ""}${o.forecast ? `<br><span title="projected local usage after ${o.forecast.days} days with the current schedules and retention${o.forecast.unknown.length ? `; no size known yet for ${esc(o.forecast.unknown.join(", "))}` : ""}">≈ ${esc(fmtBytes(o.forecast.projected))} in ${o.forecast.days} days${o.forecast.unknown.length ? " + ?" : ""}</span>` : ""}</div></div>
         <div class="card stat"><div class="label">${icon("server", "sm")} Remotes</div><div class="value">${remotesOk} <span class="muted">/ ${remotesOn}</span></div><div class="sub">${o.remotes.length ? "reachable" : "none configured"}</div></div>
         <div class="card stat"><div class="label">${icon(o.encryption.configured ? "lock" : "unlock", "sm")} Encryption</div><div class="value">${o.encryption.configured ? "On" : "Off"}</div><div class="sub">${o.encryption.configured ? `key ${esc(o.encryption.fingerprint)} · ${o.backups.encrypted}/${o.backups.count} files` : "no key configured"}</div></div>
         <div class="card stat"><div class="label">${icon("calendar", "sm")} Next backup</div><div class="value">${o.next_run ? esc(ago(o.next_run).replace(" ago", "")) : "—"}</div><div class="sub">${o.next_run ? esc(fmtTime(o.next_run)) : "no active schedule"}</div></div>
@@ -238,11 +256,12 @@ export const volumes = {
       ${filtered.length ? filtered.map((v) => volCard(v, byVol[v.name] || [])).join("") : emptyState(vols.length ? "No volumes match." : "No Docker volumes found.", "box")}`;
     applyWidths(el);
     bind(el, {
-      search: (i) => { state.volSearch = i.value; clearTimeout(this._t); this._t = setTimeout(() => this.render(el), 200); },
+      search: (i) => { state.volSearch = i.value; clearTimeout(this._t); this._t = setTimeout(() => keepFocus(el, () => this.render(el)), 200); },
       filter: (b) => { state.volFilter = b.dataset.v; this.render(el); },
       anon: (i) => { state.showAnon = i.checked; this.render(el); },
       toggle: (h) => { const n = h.dataset.vol; state.expanded.has(n) ? state.expanded.delete(n) : state.expanded.add(n); this.render(el); },
       backupVol: (b) => backupDialog([b.dataset.vol]),
+      measure: async (a) => { const box = $(`[data-usage="${CSS.escape(a.dataset.vol)}"]`, el); box.innerHTML = `· ${icon("loader", "spin sm")} measuring…`; try { const r = await api.get(`/api/volumes/estimate?volumes=${encodeURIComponent(a.dataset.vol)}`); const it = r.items[0]; box.innerHTML = it.bytes == null ? "· size unknown" : `· ${esc(fmtBytes(it.bytes))} of data on the volume → about ${esc(fmtBytes(it.estimated))} per backup`; } catch (e) { box.innerHTML = `· ${esc(e.message)}`; } },
       prune: (b) => pruneDialog(b.dataset.vol),
       uploadVol: (b) => uploadDialog(b.dataset.vol),
       schedule: (b) => scheduleDialog(b.dataset.vol).then(() => this.render(el)),
@@ -280,7 +299,7 @@ function volCard(v, backups) {
       <div class="act flex gap-2">${v.missing ? "" : `<button class="btn btn-sm" data-action="backupVol" data-vol="${esc(v.name)}" title="Backup now">${icon("play")} Backup</button>`}<button class="btn btn-sm btn-ghost btn-icon" data-action="schedule" data-vol="${esc(v.name)}" title="${s ? "Edit schedule" : "Add schedule"}">${icon("calendar")}</button></div>
     </div>
     ${open ? `<div class="vol-b">
-      <div class="vol-toolbar"><span class="muted small grow">${backups.length} backup(s), ${esc(fmtBytes(backups.reduce((a, b) => a + b.size, 0)))}</span>
+      <div class="vol-toolbar"><span class="muted small grow">${backups.length} backup(s), ${esc(fmtBytes(backups.reduce((a, b) => a + b.size, 0)))} <span data-usage="${esc(v.name)}" class="muted">· <a href="#" data-action="measure" data-vol="${esc(v.name)}">measure volume size</a></span></span>
         <button class="btn btn-sm" data-action="uploadVol" data-vol="${esc(v.name)}">${icon("upload")} Upload file</button>
         ${backups.length > 1 ? `<button class="btn btn-sm" data-action="prune" data-vol="${esc(v.name)}">${icon("scissors")} Prune</button>` : ""}</div>
       ${backups.length ? `<div class="table-wrap"><table><thead><tr><th>Created</th><th>Size</th><th>Security</th><th>Remotes</th><th>Source</th><th></th></tr></thead><tbody>

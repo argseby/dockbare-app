@@ -243,3 +243,15 @@ document.addEventListener("drop", (e) => {
   const input = l.querySelector("input[type=file]");
   if (input && e.dataTransfer?.files?.length) { try { input.files = e.dataTransfer.files; fileLabelUpdate(input); } catch { /* read-only in some browsers */ } }
 });
+
+export function keepFocus(root, renderFn) {
+  // Remember which input (by data-action or name) had focus, re-render, then restore focus and caret.
+  const a = document.activeElement;
+  const key = a && root.contains(a) ? (a.dataset.action ? `[data-action="${a.dataset.action}"]` : a.name ? `[name="${a.name}"]` : null) : null;
+  const pos = key && a.selectionEnd != null ? a.selectionEnd : null;
+  const out = renderFn();
+  const restore = () => { if (!key) return; const el = root.querySelector(key); if (el) { el.focus({ preventScroll: true }); try { if (pos != null) el.setSelectionRange(pos, pos); } catch { /* not a text input */ } } };
+  if (out && typeof out.then === "function") return out.then((v) => { restore(); return v; });
+  restore();
+  return out;
+}

@@ -288,3 +288,30 @@ def test_versioned_static_assets(client, auth_client, app):
     r = client.get("/static/app.js")
     assert r.status_code == 200 and r.headers["Cache-Control"] == "no-cache"
     assert client.get(f"/static/{b}/../../etc/passwd").status_code in (404, 400)
+
+
+def test_env_report_masks_secrets(auth_client):
+    rep = {r["name"]: r for r in auth_client.get("/api/settings").get_json()["env_report"]}
+    assert rep["DOCKBARE_ADMIN_PASSWORD"]["set"] and rep["DOCKBARE_ADMIN_PASSWORD"]["value"] == "••••••••"
+    assert rep["DOCKBARE_ENCRYPTION_KEY"]["value"] == "••••••••" and rep["DOCKBARE_SECRET_KEY"]["value"] == "••••••••"
+    assert rep["DOCKBARE_ADMIN_USER"]["value"] == "admin" and rep["DOCKBARE_ADMIN_USER"]["source"] == "environment"
+    assert rep["DOCKBARE_PORT"]["set"] is False and rep["DOCKBARE_PORT"]["default"] == "5000"
+    assert "test-password-1234" not in str(rep)
+
+
+def test_estimate_and_forecast(auth_client, app, fake_docker, monkeypatch):
+    monkeypatch.setattr(fake_docker, "volume_usage_bytes", lambda v: 1000 if v == "vol1" else None, raising=False)
+    r = auth_client.get("/api/volumes/estimate?volumes=vol1,vol2").get_json()
+    it = {x["volume"]: x for x in r["items"]}
+    assert it["vol1"]["bytes"] == 1000 and it["vol1"]["estimated"] == 600 and it["vol1"]["ratio_source"] == "default"
+    assert it["vol2"]["bytes"] is None and it["vol2"]["estimated"] is None
+    assert auth_client.get("/api/volumes/estimate?volumes=../x").status_code == 400
+    # after a real backup the ratio comes from history
+    from tests.conftest import wait_task
+    t = wait_task(auth_client, auth_client.post("/api/backups", json={"volumes": ["vol1"], "encrypt": False}).get_json()["tasks"][0]["id"])
+    assert t["status"] == "success"
+    r = auth_client.get("/api/volumes/estimate?volumes=vol1").get_json()["items"][0]
+    assert r["ratio_source"] == "history" and 0 < r["ratio"] <= 1.5
+    auth_client.post("/api/schedules", json={"volume": "vol1", "mode": "interval", "interval_seconds": 86400, "keep_max": 5})
+    f = auth_client.get("/api/overview").get_json()["forecast"]
+    assert f["days"] == 30 and f["projected"] >= f["current"] and f["unknown"] == []

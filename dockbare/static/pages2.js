@@ -1,5 +1,5 @@
 // Pages: remotes, recovery, reports, activity, settings
-import { $, $$, esc, icon, api, toast, modal, confirmDialog, taskLogModal, fmtBytes, fmtTime, ago, dur, timeEl, bind, formValues, busy, switchHtml, emptyState, applyWidths, levelBadge, remoteBadge, copyText, fileInput } from "./ui.js";
+import { $, $$, esc, icon, api, toast, modal, confirmDialog, taskLogModal, fmtBytes, fmtTime, ago, dur, timeEl, bind, formValues, busy, switchHtml, emptyState, applyWidths, levelBadge, remoteBadge, copyText, fileInput, keepFocus } from "./ui.js";
 import { state, loadRemotes, eventRow } from "./pages.js";
 import { historyBars, legend as barsLegend, enableBarTooltips } from "./bars.js";
 
@@ -233,7 +233,7 @@ export const activity = {
         ${events.map((e) => `<tr><td class="nowrap" title="${esc(fmtTime(e.ts))}">${esc(fmtTime(e.ts))}</td><td>${levelBadge(e.level)}</td><td class="mono small">${esc(e.kind)}</td><td class="small">${esc(e.volume || "")}</td><td>${esc(e.message)}${e.backup ? `<div class="muted small mono">${esc(e.backup)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
         ${events.length >= 100 ? `<div class="card-c center"><button class="btn" data-action="more" data-before="${events[events.length - 1].id}">Load older</button></div>` : ""}` : emptyState("No events match.", "activity")}</div></div>`;
     $$("[data-narrow]", el).forEach((i) => (i.style.width = "150px"));
-    const rerender = () => { clearTimeout(this._t); this._t = setTimeout(() => this.render(el), 250); };
+    const rerender = () => { clearTimeout(this._t); this._t = setTimeout(() => keepFocus(el, () => this.render(el)), 250); };
     bind(el, {
       q: (i) => { f.q = i.value; rerender(); }, level: (i) => { f.level = i.value; rerender(); }, kind: (i) => { f.kind = i.value; rerender(); }, volume: (i) => { f.volume = i.value; rerender(); },
       more: async (b) => { const older = await api.get(`/api/events?${qs}&before=${b.dataset.before}`); const tbody = $("tbody", el); older.forEach((e) => tbody.insertAdjacentHTML("beforeend", `<tr><td class="nowrap">${esc(fmtTime(e.ts))}</td><td>${levelBadge(e.level)}</td><td class="mono small">${esc(e.kind)}</td><td class="small">${esc(e.volume || "")}</td><td>${esc(e.message)}</td></tr>`)); if (older.length < 100) b.remove(); else b.dataset.before = older[older.length - 1].id; },
@@ -397,27 +397,18 @@ async function renderSecurity(c, s) {
 
 function renderEnvironment(c, s) {
   const e = s.env;
-  c.innerHTML = `<div class="grid cols-2"><div class="card"><div class="card-h"><h2>Runtime</h2></div><div class="card-c"><dl class="kv">
-      <dt>.env file</dt><dd class="mono">${esc(e.env_file || "none found (using environment only)")}</dd>
+  const rep = s.env_report || [];
+  const setRows = rep.filter((r) => r.set), defRows = rep.filter((r) => !r.set);
+  const row = (r) => `<tr><td class="mono">${esc(r.name)}</td><td>${r.set ? (r.secret ? `<span class="badge ok">${icon("lock", "sm")} set</span>` : `<code>${esc(r.value)}</code>`) : `<span class="muted">${esc(r.default == null ? "not set" : "default: " + r.default)}</span>`}</td><td class="small">${r.set ? `<span class="badge ${r.source === "env file" ? "info" : "outline"}">${esc(r.source)}</span>` : ""}</td></tr>`;
+  c.innerHTML = `<div class="grid cols-2"><div class="stack"><div class="card"><div class="card-h"><h2>Runtime</h2></div><div class="card-c"><dl class="kv">
+      <dt>Configuration</dt><dd>${e.env_file ? `environment + <span class="mono">${esc(e.env_file)}</span>` : "environment variables (compose / Portainer stack)"}</dd>
       <dt>Data directory</dt><dd class="mono">${esc(e.data_dir)}</dd><dt>Backup directory</dt><dd class="mono">${esc(e.backup_dir)}</dd>
       <dt>Time zone</dt><dd>${esc(e.timezone)}</dd><dt>Behind proxy</dt><dd>${e.behind_proxy ? "yes (X-Forwarded-* trusted)" : "no"}</dd>
       <dt>Encryption</dt><dd>${e.encryption_configured ? `configured · fingerprint <code>${esc(s.encryption.fingerprint)}</code>` : "not configured"}</dd>
       <dt>Log file</dt><dd class="mono">${esc(s.log_file || "")}</dd>
-      <dt>Build</dt><dd class="mono">${esc(s.build || "")} <span class="muted small">(fingerprint of the deployed files; compare with <code>/api/health</code> after a redeploy)</span></dd></dl></div></div>
-    <div class="card"><div class="card-h"><h2>.env reference</h2></div><div class="card-c"><div class="log">${esc(`DOCKBARE_ADMIN_USER=admin
-DOCKBARE_ADMIN_PASSWORD=change-me        # or DOCKBARE_ADMIN_PASSWORD_HASH
-DOCKBARE_TOTP_SECRET=                    # optional 2FA (python -m dockbare totp-setup)
-DOCKBARE_SECRET_KEY=                     # python -m dockbare gen-secret
-DOCKBARE_ENCRYPTION_KEY=                 # system-wide backup encryption key
-DOCKBARE_BEHIND_PROXY=false              # true when behind Traefik/Caddy/nginx
-DOCKBARE_SECURE_COOKIES=auto             # auto | true | false
-DOCKBARE_SESSION_IDLE_MINUTES=720
-DOCKBARE_SESSION_MAX_HOURS=168
-DOCKBARE_LOGIN_MAX_ATTEMPTS=5
-DOCKBARE_LOGIN_WINDOW_MINUTES=15
-DOCKBARE_HELPER_IMAGE=                   # defaults to the Dockbare image itself
-DOCKBARE_PORT=5000
-TZ=Europe/Berlin`)}</div><div class="help">Changes require a restart of the container.</div></div></div></div>`;
+      <dt>Build</dt><dd class="mono">${esc(s.build || "")} <span class="muted small">(fingerprint of the deployed files, also in <code>/api/health</code>)</span></dd></dl></div></div>
+    <div class="card"><div class="card-h"><h2>Not set</h2><span class="muted small">using defaults</span></div><div class="card-c tight"><div class="table-wrap"><table><tbody>${defRows.map(row).join("") || `<tr><td class="muted">Everything is set explicitly.</td></tr>`}</tbody></table></div></div></div></div>
+    <div class="card"><div class="card-h"><h2>In effect</h2><span class="muted small">secrets are masked</span></div><div class="card-c tight"><div class="table-wrap"><table><thead><tr><th>Variable</th><th>Value</th><th>Source</th></tr></thead><tbody>${setRows.map(row).join("")}</tbody></table></div><div class="help" style-note>Changes need a restart of the container. All variables are documented in <code>.env.example</code> in the repository.</div></div></div></div>`.replace(" style-note", "");
 }
 
 
@@ -505,7 +496,7 @@ let pastOpen = false;
 export const uptime = {
   title: "Uptime",
   pollMs: 10000,
-  actions: () => `<a class="btn" href="/uptime" target="_blank" rel="noopener" data-public-link>${icon("globe")} Public page</a><button class="btn" data-action="poll">${icon("refresh")} Check now</button>`,
+  actions: () => `<a class="btn" href="/uptime" target="_blank" rel="noopener" data-public-link title="Enable it under Settings on this page first">${icon("globe")} Public page</a><button class="btn" data-action="poll">${icon("refresh")} Check now</button>`,
   async render(el) {
     const seq = (this._seq = (this._seq || 0) + 1);
     const d = await api.get("/api/uptime");
@@ -527,7 +518,7 @@ export const uptime = {
         <div class="card stat"><div class="label">${icon("container", "sm")} Monitored</div><div class="value">${sum.monitored} <span class="muted">/ ${sum.total}</span></div><div class="sub">containers</div></div>
         <div class="card stat"><div class="label">${icon("radar", "sm")} Down now</div><div class="value ${sum.down.length ? "danger" : ""}">${sum.down.length}</div><div class="sub">${esc(sum.down.join(", ") || "all good")}</div></div>
         <div class="card stat"><div class="label">${icon("activity", "sm")} Incidents 24h</div><div class="value">${sum.incidents_24h}</div><div class="sub">last check ${esc(ago(sum.last_poll))}</div></div>
-        <div class="card stat"><div class="label">${icon("globe", "sm")} Public page</div><div class="value">${s.public_enabled ? "On" : "Off"}</div><div class="sub">${rows.filter((r) => r.monitor?.public).length} container(s) listed</div></div>
+        <div class="card stat"><div class="label">${icon("globe", "sm")} Public page</div><div class="value">${s.public_enabled ? "On" : "Off"}</div><div class="sub">${s.public_enabled ? `${rows.filter((r) => r.monitor?.public).length} container(s) listed · <a href="/uptime" target="_blank" rel="noopener">/uptime</a>` : "enable it in Settings below"}</div></div>
       </div>
       ${open.length ? `<div class="card mb"><div class="card-h"><h2>${icon("radar", "sm")} Detected outages</h2><span class="muted small">from container monitoring</span></div><div class="card-c tight">${open.map((i) => { const f = i.facts || {}; return `<div class="inc-row"><div class="inc-head"><span class="dot bad"></span><b>${esc(i.container)}</b><span class="badge solid-danger">${esc({ down: "exited", oom: "out of memory", unhealthy: "unhealthy", "restart-loop": "restart loop", missing: "missing", dead: "dead" }[i.kind] || i.kind)}</span>${f.exit_code != null ? `<span class="badge outline">exit ${esc(f.exit_code)}</span>` : ""}${f.oom ? `<span class="badge outline">OOM</span>` : ""}<span class="muted small nowrap">${icon("clock", "sm")} ${esc(ago(i.started_at))}</span><span class="actions">${i.actions.length ? i.actions.map((a) => `<span class="badge ${a.ok === false ? "danger" : "outline"}">${icon(a.type === "restart" ? "refresh" : "alert", "sm")} ${esc(a.note)}</span>`).join("") : ""}<button class="btn btn-sm" data-action="restart" data-name="${esc(i.container)}">${icon("refresh")} Restart</button></span></div>${f.health || f.error ? `<div class="inc-out"><code>${esc(f.health || f.error)}</code></div>` : ""}${f.status ? `<div class="muted small">${esc(f.status)}</div>` : ""}</div>`; }).join("")}</div></div>` : ""}
       <div class="card mb"><div class="card-h"><h2>Announcements</h2><span class="muted small">manual incidents and maintenance windows for the status page</span><div class="actions"><button class="btn btn-sm" data-action="newMaint">${icon("wrench")} Schedule maintenance</button><button class="btn btn-sm btn-danger" data-action="newInc">${icon("alert")} Declare incident</button></div></div>
@@ -556,7 +547,7 @@ export const uptime = {
         <div class="card"><div class="card-h"><h2>Settings</h2></div><div class="card-c">
           <div class="form-row"><div><label class="field">Check interval (seconds)</label><input type="number" name="poll_seconds" min="5" max="600" value="${s.poll_seconds}"></div><div><label class="field">Keep incidents (days)</label><input type="number" name="incident_keep_days" min="7" value="${s.incident_keep_days}"></div></div>
           <div class="stack gap-2 mt">${switchHtml("monitor_new", s.monitor_new, "Monitor every container by default (defaults: notify, no auto-restart)")}${switchHtml("public_enabled", s.public_enabled, "Enable the public status page at /uptime (no login)")}${switchHtml("public_show_peers", s.public_show_peers, "Include peers and their public services on it")}</div>
-          <div class="form-group mt"><label class="field">Public page title</label><input type="text" name="public_title" value="${esc(s.public_title)}"></div>
+          <div class="form-row mt"><div><label class="field">Public page title</label><input type="text" name="public_title" value="${esc(s.public_title)}"></div><div><label class="field">Name of this site on the page</label><input type="text" name="public_group_name" value="${esc(s.public_group_name || "")}" placeholder="${esc(sum.public_group_name || "This site")}"><div class="help">Heading of this instance's service group; peers show it too. Empty = instance name.</div></div></div>
           <div class="help mb">Docker events trigger an immediate check; the interval is the fallback. Containers mark as public in their monitor settings.</div>
           <button class="btn btn-primary" data-action="save">${icon("check")} Save</button></div></div>
         <div class="card"><div class="card-h"><h2>Incident history</h2></div><div class="card-c tight">${closed.length ? `<div class="table-wrap"><table><thead><tr><th>Container</th><th>Kind</th><th>Started</th><th>Duration</th><th>Actions</th></tr></thead><tbody>${closed.slice(0, 30).map((i) => `<tr><td>${esc(i.container)}</td><td><span class="badge outline">${esc(i.kind)}</span></td><td class="nowrap">${esc(fmtTime(i.started_at))}</td><td class="nowrap">${esc(dur(i.duration))}</td><td class="small">${i.actions.length ? i.actions.map((a) => esc(a.type)).join(", ") : "—"}</td></tr>`).join("")}</tbody></table></div>` : emptyState("No incidents recorded.", "radar")}</div></div>

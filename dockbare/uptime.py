@@ -35,6 +35,7 @@ SETTINGS_DEFAULTS = {
     "monitor_new": True,
     "public_enabled": False,
     "public_title": "Service status",
+    "public_group_name": "",
     "public_show_peers": True,
     "incident_keep_days": 365,
 }
@@ -77,6 +78,7 @@ class Uptime:
         s["poll_seconds"] = max(5, min(600, int(s.get("poll_seconds") or 15)))
         s["incident_keep_days"] = max(7, min(3650, int(s.get("incident_keep_days") or 365)))
         s["public_title"] = str(s.get("public_title") or "Service status")[:80]
+        s["public_group_name"] = str(s.get("public_group_name") or "").strip()[:80]
         for b in ("monitor_new", "public_enabled", "public_show_peers"):
             s[b] = bool(s.get(b))
         self.m.db.set_setting("uptime", s)
@@ -481,7 +483,16 @@ class Uptime:
         since = time.time() - 86400
         inc24 = self.m.db.one("SELECT COUNT(*) AS n FROM incidents WHERE started_at >= ? OR ended_at >= ?", (since, since))["n"]
         return {"monitored": len(monitored), "total": len(snap), "down": down, "incidents_24h": int(inc24), "last_poll": self.last_poll, "error": self.last_error,
-                "public_items": self.public_items(), "announcements": [a for a in self.public_announcements() if a["active"] or a["upcoming"]]}
+                "public_items": self.public_items(), "announcements": [a for a in self.public_announcements() if a["active"] or a["upcoming"]],
+                "public_group_name": self.public_group_name()}
+
+    def public_group_name(self) -> str:
+        """Name of this site's group on the status page: the setting, else the instance name, else 'This site'."""
+        custom = self.settings().get("public_group_name")
+        if custom:
+            return custom
+        name = self.m.instance_name()
+        return "This site" if re.fullmatch(r"dockbare-[0-9a-f]{4}", name) else name
 
     def public_items(self) -> list[dict]:
         now = time.time()
@@ -501,7 +512,7 @@ class Uptime:
         if time.time() - self.last_poll > 60:
             self.poll()
         anns = self.public_announcements()
-        groups = [{"name": self.m.instance_name(), "self": True, "online": True, "items": self.public_items(), "announcements": [a for a in anns if a["active"] or a["upcoming"]]}]
+        groups = [{"name": self.public_group_name(), "self": True, "online": True, "items": self.public_items(), "announcements": [a for a in anns if a["active"] or a["upcoming"]]}]
         if s.get("public_show_peers") and self.m.peers:
             for p in self.m.peers.list():
                 if not p["enabled"]:
@@ -509,7 +520,7 @@ class Uptime:
                 st = p.get("status") or {}
                 remote = st.get("remote") or {}
                 up_info = remote.get("uptime") or {}
-                groups.append({"name": p["name"], "self": False, "online": not (p["alert_active"] or st.get("ok") is False),
+                groups.append({"name": up_info.get("public_group_name") or p["name"], "self": False, "online": not (p["alert_active"] or st.get("ok") is False),
                                "checked_at": st.get("checked_at"), "items": up_info.get("public_items") or [], "announcements": up_info.get("announcements") or []})
         all_items = [i for g in groups for i in g["items"]]
         down = [i for i in all_items if i["status"] == "down"] + [g for g in groups if not g["online"]]

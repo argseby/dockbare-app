@@ -128,6 +128,20 @@ def volumes():
 
 
 # ------------------------------------------------------------------- backups
+@api.get("/volumes/estimate")
+def volumes_estimate():
+    names = [v for v in (request.args.get("volumes") or "").split(",") if v]
+    if not names:
+        return err("volumes is required.")
+    if len(names) > 25:
+        return err("At most 25 volumes per request.")
+    bad = [v for v in names if not valid_volume_name(v)]
+    if bad:
+        return err(f"Invalid volume name: {bad[0]}")
+    measure = request.args.get("measure", "1") in ("1", "true")
+    return jsonify(core().manager.estimate_backups(names, measure=measure))
+
+
 @api.get("/backups")
 def backups():
     volume = request.args.get("volume") or None
@@ -431,6 +445,7 @@ def settings():
         "helper_image": c.docker._helper_image,
         "log_file": c.log_file,
         "build": build_id(),
+        "env_report": __import__("dockbare.config", fromlist=["env_report"]).env_report(c.settings.env_file_vars),
     })
 
 

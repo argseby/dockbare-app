@@ -66,6 +66,7 @@ class Manager:
         self.remote_health: dict[str, dict] = {}
         self._last_scan = 0.0
         self._scan_lock = threading.Lock()
+        self._usage_cache: dict[str, tuple[float, int | None]] = {}
         self.hostname = socket.gethostname()
         self.started_at = time.time()
         self.peers = None  # set by app wiring
@@ -1005,6 +1006,83 @@ class Manager:
         except OSError:
             return {}
 
+    def volume_usage(self, volume: str, max_age: float = 600) -> int | None:
+        """Bytes used by the volume's data (du inside a helper container), cached."""
+        if not valid_volume_name(volume):
+            raise ManagerError("Invalid volume name.")
+        hit = self._usage_cache.get(volume)
+        if hit and time.time() - hit[0] < max_age:
+            return hit[1]
+        size = self.docker.volume_usage_bytes(volume)
+        self._usage_cache[volume] = (time.time(), size)
+        return size
+
+    def compression_ratios(self) -> dict[str, float]:
+        """Observed compressed/raw ratio per volume from previous backups."""
+        out: dict[str, float] = {}
+        agg: dict[str, list[int]] = {}
+        for b in self.list_backups():
+            raw = (b.get("meta") or {}).get("raw_bytes")
+            if raw:
+                a = agg.setdefault(b["volume"], [0, 0])
+                a[0] += b["size"]
+                a[1] += int(raw)
+        for v, (size, raw) in agg.items():
+            if raw > 0:
+                out[v] = max(0.01, min(1.5, size / raw))
+        return out
+
+    def estimate_backups(self, volumes: list[str], measure: bool = True) -> dict:
+        """Per volume: data on disk, expected archive size, and the ratio used."""
+        ratios = self.compression_ratios()
+        known = [r for r in ratios.values()]
+        default_ratio = sum(known) / len(known) if known else 0.6
+        items = []
+        for v in volumes:
+            usage = self.volume_usage(v) if measure else (self._usage_cache.get(v) or (None, None))[1]
+            ratio = ratios.get(v, default_ratio)
+            items.append({"volume": v, "bytes": usage, "ratio": ratio, "estimated": int(usage * ratio) if usage is not None else None, "ratio_source": "history" if v in ratios else "default"})
+        return {"items": items, "default_ratio": default_ratio}
+
+    def storage_forecast(self, days: int = 30) -> dict:
+        """Projected local usage after `days` of scheduled backups with retention applied."""
+        backups = self.list_backups()
+        current = sum(b["size"] for b in backups)
+        by_vol: dict[str, list[int]] = {}
+        for b in backups:
+            by_vol.setdefault(b["volume"], []).append(b["size"])
+        projected = current
+        unknown = []
+        for sch in self.list_schedules():
+            if not sch["enabled"]:
+                continue
+            v = sch["volume"]
+            sizes = by_vol.get(v)
+            if sizes:
+                avg = sum(sizes) / len(sizes)
+            else:
+                hit = self._usage_cache.get(v)
+                ratio = self.compression_ratios().get(v, 0.6)
+                avg = hit[1] * ratio if hit and hit[1] else None
+            if avg is None:
+                unknown.append(v)
+                continue
+            if sch["mode"] == "daily":
+                runs = days * (len(sch.get("weekdays") or range(7)) / 7)
+                interval = 86400
+            else:
+                interval = max(60, int(sch["interval_seconds"]))
+                runs = days * 86400 / interval
+            keep = runs
+            if sch["keep_max"]:
+                keep = min(keep, sch["keep_max"])
+            if sch["keep_seconds"]:
+                keep = min(keep, sch["keep_seconds"] / interval + 1)
+            keep = max(1, keep)
+            # steady state: `keep` archives of this volume instead of what is there now
+            projected += avg * keep - sum(sizes or [])
+        return {"current": current, "projected": int(max(projected, 0)), "days": days, "unknown": unknown, "disk": self.disk_usage()}
+
     def volumes_overview(self) -> list[dict]:
         try:
             volumes = self.docker.list_volumes()
@@ -1076,6 +1154,7 @@ class Manager:
             "peers": self.peers.summary() if self.peers else [],
             "uptime": self.uptime.summary() if self.uptime else None,
             "security": self.security_warnings(),
+            "forecast": self.storage_forecast(),
             "sync": {"enabled": self.general()["sync_enabled"], "interval_minutes": self.general()["sync_interval_minutes"],
                      "next_run": (lambda j: j.next_run_time.timestamp() if j and j.next_run_time else None)(self.scheduler.get_job("sync") if self.scheduler.running else None)},
         }

@@ -596,3 +596,6 @@ html[data-theme="dark"] .st-status .chip { background: rgba(0,0,0,.25); border-c
 .status-pick .sp input { position: absolute; opacity: 0; width: 0; height: 0; }
 .status-pick .sp:has(input:checked) { background: var(--primary); color: #fff; border-color: var(--primary); }
 .status-pick .sp.cur:not(:has(input:checked)) { border-style: dashed; }
+.estimate { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); }
+.estimate .icon { vertical-align: -3px; }
+.check-list .vsize { margin-left: auto; white-space: nowrap; }

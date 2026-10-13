@@ -86,6 +86,7 @@ class Settings:
     generated_secret: bool = field(default=False)
     notify_env: dict = field(default_factory=dict)
     env_remotes: list = field(default_factory=list)
+    env_file_vars: dict = field(default_factory=dict)
     env_peers: list = field(default_factory=list)
     testing: bool = False
 
@@ -232,6 +233,43 @@ def _notify_from_env() -> dict:
     return out
 
 
+KNOWN_VARS = [
+    ("ADMIN_USER", "admin"), ("ADMIN_PASSWORD", None), ("ADMIN_PASSWORD_HASH", None), ("TOTP_SECRET", None),
+    ("SECRET_KEY", "(generated)"), ("ENCRYPTION_KEY", None), ("INSTANCE_NAME", "(generated)"), ("PEER_TOKEN", "(generated)"),
+    ("BEHIND_PROXY", "false"), ("SECURE_COOKIES", "auto"), ("LISTEN", "0.0.0.0"), ("PORT", "5000"),
+    ("SESSION_IDLE_MINUTES", "720"), ("SESSION_MAX_HOURS", "168"), ("LOGIN_MAX_ATTEMPTS", "5"), ("LOGIN_WINDOW_MINUTES", "15"),
+    ("HELPER_IMAGE", "(own image)"), ("DATA_DIR", "/data"), ("BACKUP_DIR", "/backups"), ("LOG_DIR", "<data>/logs"),
+    ("TIMEZONE", "TZ or UTC"), ("LOG_LEVEL", "INFO"),
+]
+SECRET_MARKERS = ("PASSWORD", "SECRET", "KEY", "TOKEN", "PASSPHRASE")
+
+
+def env_report(env_file_vars: dict | None = None) -> list[dict]:
+    """Which DOCKBARE_* variables are in effect, masked for secrets (for the Settings → Environment tab)."""
+    env_file_vars = env_file_vars or {}
+    seen: set[str] = set()
+    rows = []
+
+    def row(name: str, default):
+        full = ENV_PREFIX + name
+        raw = os.environ.get(full)
+        is_secret = any(m in name for m in SECRET_MARKERS)
+        src = "env file" if full in env_file_vars else ("environment" if raw not in (None, "") else "default")
+        value = None if raw in (None, "") else ("••••••••" if is_secret else raw)
+        rows.append({"name": full, "set": raw not in (None, ""), "value": value, "default": default, "source": src, "secret": is_secret})
+        seen.add(full)
+
+    for name, default in KNOWN_VARS:
+        row(name, default)
+    for full in sorted(os.environ):
+        if full.startswith(ENV_PREFIX) and full not in seen:
+            name = full[len(ENV_PREFIX):]
+            row(name, None)
+    tz = os.environ.get("TZ")
+    rows.append({"name": "TZ", "set": bool(tz), "value": tz, "default": "UTC", "source": "environment" if tz else "default", "secret": False})
+    return rows
+
+
 def _find_env_file() -> Path | None:
     explicit = os.environ.get(ENV_PREFIX + "ENV_FILE")
     if explicit is not None:  # explicit (possibly empty) path disables auto-discovery
@@ -272,8 +310,12 @@ def _load_or_create_secret(data_dir: Path) -> tuple[str, bool]:
 
 def load_settings() -> Settings:
     env_file = _find_env_file()
+    env_file_vars: dict = {}
     if env_file:
         # Real environment variables win over the .env file.
+        from dotenv import dotenv_values
+
+        env_file_vars = {k: v for k, v in dotenv_values(env_file).items() if k not in os.environ}
         load_dotenv(env_file, override=False)
 
     data_dir = Path(_env("DATA_DIR", "/data")).expanduser().resolve()
@@ -313,6 +355,7 @@ def load_settings() -> Settings:
         generated_secret=generated,
         notify_env=_notify_from_env(),
         env_remotes=_remotes_from_env(),
+        env_file_vars=env_file_vars,
         env_peers=_peers_from_env(),
         testing=_env_bool("TESTING", False),
     )

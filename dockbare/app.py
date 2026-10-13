@@ -201,7 +201,7 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
     @app.get("/uptime")
     def uptime_page():
         if not core.uptime.settings().get("public_enabled"):
-            return page("login.html", 404)
+            return page("status-disabled.html", 404)
         return page("uptime.html")
 
     @app.errorhandler(404)
