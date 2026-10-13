@@ -54,10 +54,11 @@ And **keep `DOCKBARE_ENCRYPTION_KEY` somewhere safe**; without it the encrypted 
 
 ### Portainer
 
-Git-managed Portainer stacks don't have a `.env` file next to the compose file. Put the variables into
-the stack's *Environment variables* and change `env_file: .env` to `env_file: stack.env` (Portainer writes
-that file for you). Use absolute host paths for `/backups` and `/data`, otherwise a new stack gets a new
-`./backups` directory and your existing archives are simply not visible to it (they are not touched).
+Use [docker-compose.portainer.yml](docker-compose.portainer.yml) as the compose path of a git stack. It
+reads everything from the stack's *Environment variables* (Portainer writes them to `stack.env`): the app
+settings from `.env.example` plus `PROXY_NETWORK` (your reverse-proxy network), `DOCKBARE_HOST` (for the
+Traefik labels) and `DOCKBARE_BACKUPS_PATH` / `DOCKBARE_DATA_PATH` (absolute host directories, so a
+redeploy finds the same archives). Portainer builds the image from the repository.
 
 ## `.env`
 

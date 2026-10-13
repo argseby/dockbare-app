@@ -1,31 +1,39 @@
 # Portainer (git stack) variant.
-# - Put the variables from .env.example into the stack's "Environment variables"; Portainer
-#   writes them to stack.env, which is handed to the container below.
-# - Use absolute host paths for /backups and /data so a redeploy or a new stack finds the same files.
-# - DOCKBARE_BEHIND_PROXY=true when a reverse proxy (Traefik/Caddy/nginx) terminates TLS.
+# Everything you may need to change comes from the stack's environment variables (Portainer writes
+# them to stack.env, which is also handed to the container). Defaults are in ${VAR:-default}.
+#
+#   PROXY_NETWORK          existing reverse-proxy network to join      (default: reverse-proxy)
+#   DOCKBARE_HOST          public host name for the Traefik labels     (default: backup.example.com)
+#   DOCKBARE_BACKUPS_PATH  host directory for the archives             (default: /srv/dockbare/backups)
+#   DOCKBARE_DATA_PATH     host directory for database/logs/snapshots  (default: /srv/dockbare/data)
+#   TRAEFIK_ENTRYPOINT / TRAEFIK_CERTRESOLVER   (defaults: websecure / letsencrypt)
+# plus the application variables from .env.example (DOCKBARE_ADMIN_PASSWORD, keys, ...).
 services:
   dockbare:
     build: .                                   # built from this repo by Portainer; or use image: <registry>/dockbare:3
     container_name: dockbare
     restart: unless-stopped
     env_file: stack.env
+    environment:
+      - DOCKBARE_BEHIND_PROXY=${DOCKBARE_BEHIND_PROXY:-true}
     volumes:
-      - /srv/dockbare/backups:/backups          # <- change to the host path of your existing backups
-      - /srv/dockbare/data:/data
+      - ${DOCKBARE_BACKUPS_PATH:-/srv/dockbare/backups}:/backups
+      - ${DOCKBARE_DATA_PATH:-/srv/dockbare/data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - proxy-network                           # your reverse-proxy network (same as the old stack)
+      - proxy
+    labels:
+      - traefik.enable=${TRAEFIK_ENABLE:-true}
+      - traefik.docker.network=${PROXY_NETWORK:-reverse-proxy}
+      - traefik.http.routers.dockbare.rule=Host(`${DOCKBARE_HOST:-backup.example.com}`)
+      - traefik.http.routers.dockbare.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.dockbare.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      - traefik.http.services.dockbare.loadbalancer.server.port=5000
     # Only if you access it without a reverse proxy:
     # ports:
     #   - "127.0.0.1:5000:5000"
-    # Example Traefik labels (adjust router name, host and entrypoint):
-    # labels:
-    #   - traefik.enable=true
-    #   - traefik.http.routers.dockbare.rule=Host(`backup.example.com`)
-    #   - traefik.http.routers.dockbare.entrypoints=websecure
-    #   - traefik.http.routers.dockbare.tls.certresolver=letsencrypt
-    #   - traefik.http.services.dockbare.loadbalancer.server.port=5000
 
 networks:
-  proxy-network:
+  proxy:
     external: true
+    name: ${PROXY_NETWORK:-reverse-proxy}
