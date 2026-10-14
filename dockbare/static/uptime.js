@@ -87,10 +87,8 @@ function render(d) {
   activeInc.forEach((a) => subBits.push(`${a.title} — ${(STATUS_LABEL[a.status] || a.status).toLowerCase()}${a.updates && a.updates[0] ? `, last update ${ago(a.updates[0].ts)}` : ""}`));
   if (inMaint.length) subBits.push(`maintenance: ${inMaint.map((a) => a.title).join(", ")}`);
   if (!subBits.length) subBits.push(`${items.length} service(s)${d.groups.length > 1 ? ` across ${d.groups.length} locations` : ""} · ${winLabel()} availability ${pct(avgPct(items, win))}`);
-  const chips = [["check", items.length - downItems.length - degradedItems.length, "operational"], ["x", downItems.length, "down"], ["alert", degradedItems.length, "degraded"], ["alert", activeInc.length, activeInc.length === 1 ? "incident" : "incidents"], ["wrench", inMaint.length + active.filter((a) => a.upcoming).length, "maintenance"]]
-    .filter(([, n], i) => n || i === 0).map(([ic2, n, l]) => `<span class="chip" title="${l}">${icon(ic2, "sm")} ${n}<span class="lbl"> ${l}</span></span>`).join("");
   $("#hero").className = `st-status st-status--${d.overall}`;
-  $("#hero").innerHTML = `${icon(ic)}<span class="txt">${esc(text)}</span><span class="chips">${chips}</span><span class="reason">${esc(subBits.join(" · "))}</span>`;
+  $("#hero").innerHTML = `${icon(ic)}<span class="txt">${esc(text)}</span><span class="reason">${esc(subBits.join(" · "))}</span>`;
   const nInc = activeInc.length, nMaint = active.length - activeInc.length;
   $("#announcements").innerHTML = active.length
     ? `<div class="st-section"><div class="st-section-h"><h2>Active</h2><span class="muted">${[nInc ? `${nInc} ${nInc === 1 ? "incident" : "incidents"}` : "", nMaint ? `${nMaint} maintenance` : ""].filter(Boolean).join(" · ")}</span></div>${active.map((a) => announcement(a, a.group)).join("")}</div>`
