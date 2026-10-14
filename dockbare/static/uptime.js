@@ -108,11 +108,25 @@ function render(d) {
   const hist = [...(d.announcements || []).map((a) => ({ name: a.title, kind: a.type === "incident" ? `${a.severity || ""} incident`.trim() : "maintenance", cls: a.type === "incident" ? (a.severity === "major" ? "bad" : "warn") : "info", started_at: a.starts_at, ended_at: a.resolved_at || a.ends_at, duration: (a.resolved_at || a.ends_at || Date.now() / 1000) - a.starts_at, message: a.message, updates: a.updates })),
     ...(d.incidents || []).map((i) => ({ ...i, cls: i.ended_at ? "ok" : "bad" }))].sort((a, b) => b.started_at - a.started_at);
   const days = new Map();
-  hist.forEach((i) => { const k = new Date(i.started_at * 1000).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }); (days.get(k) || days.set(k, []).get(k)).push(i); });
+  hist.forEach((i) => { const k = dayKey(i.started_at); (days.get(k) || days.set(k, []).get(k)).push(i); });
   $("#incidents-count").textContent = active.length ? String(active.length) : "";
-  $("#history").innerHTML = `<div class="st-section-h"><h2>${icon("clock", "sm")} Past ${d.history_days} days</h2><span class="muted">${hist.length ? `${hist.length} ${hist.length === 1 ? "event" : "events"}` : ""}</span></div>${hist.length ? [...days.entries()].map(([day, list]) => `<div class="st-day"><h3>${esc(day)}</h3><div class="st-tl">${list.map((i) => `<div class="item"><span class="dot ${i.cls || "ok"}"></span><div><b>${esc(i.name)}</b> <span class="badge outline">${esc(KIND_LABEL[i.kind] || i.kind)}</span>${i.ended_at ? "" : '<span class="badge danger">ongoing</span>'}${i.message ? `<div class="msg">${esc(i.message)}</div>` : ""}</div><div class="when">${icon("clock", "sm")} ${esc(new Date(i.started_at * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))}${i.ended_at ? `<br>${esc(dur(i.duration))}` : ""}</div></div>`).join("")}</div></div>`).join("") : `<div class="st-tl"><div class="st-empty">No incidents in the last ${d.history_days} days.</div></div>`}`;
+  $("#history").innerHTML = `<div class="st-section-h"><h2>${icon("clock", "sm")} Past ${d.history_days} days</h2><span class="muted">${hist.length ? `${hist.length} ${hist.length === 1 ? "event" : "events"}` : ""}</span></div>${hist.length ? [...days.entries()].map(([day, list]) => `<div class="st-day" data-day="${esc(day)}" data-ts="${Math.floor(list[0].started_at)}"><h3>${esc(day)}</h3><div class="st-tl">${list.map((i) => `<div class="item"><span class="dot ${i.cls || "ok"}"></span><div><b>${esc(i.name)}</b> <span class="badge outline">${esc(KIND_LABEL[i.kind] || i.kind)}</span>${i.ended_at ? "" : '<span class="badge danger">ongoing</span>'}${i.message ? `<div class="msg">${esc(i.message)}</div>` : ""}</div><div class="when">${icon("clock", "sm")} ${esc(new Date(i.started_at * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))}${i.ended_at ? `<br>${esc(dur(i.duration))}` : ""}</div></div>`).join("")}</div></div>`).join("") : `<div class="st-tl"><div class="st-empty">No incidents in the last ${d.history_days} days.</div></div>`}`;
   const repo = (d.app && d.app.url) || REPO;
-  $("#foot").innerHTML = `<span>${icon("refresh", "sm")} ${esc(new Date(d.updated * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))}</span><span class="sep">·</span><a href="${esc(repo)}" target="_blank" rel="noopener" title="Dockbare on GitHub">${icon("github", "sm")} Dockbare</a><span class="sep">·</span><a href="/admin" title="Sign in">Sign in</a>`;
+  let when;
+  try { when = new Date(d.updated * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: d.timezone || undefined, timeZoneName: "short" }); }
+  catch (e) { when = new Date(d.updated * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }); }
+  $("#foot").innerHTML = `<span title="last refresh, server time${d.timezone ? ` (${esc(d.timezone)})` : ""}">${icon("refresh", "sm")} ${esc(when)}</span><span class="sep">·</span><a href="${esc(repo)}" target="_blank" rel="noopener" title="Dockbare on GitHub">${icon("github", "sm")} Dockbare</a><span class="sep">·</span><a href="/admin" title="Sign in">Sign in</a>`;
+}
+const dayKey = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+function jumpToDay(ts) {
+  // a bar was clicked: open the incidents tab and scroll to that day's incidents (or the incident that was still running then)
+  location.hash = "#incidents";
+  showTab();
+  const groups = [...document.querySelectorAll("#history .st-day")];
+  const key = dayKey(ts + 43200);
+  const target = groups.find((g) => g.dataset.day === key) || groups.find((g) => Number(g.dataset.ts) <= ts + 86400) || $("#history");
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (target.classList.contains("st-day")) { target.classList.remove("flash"); void target.offsetWidth; target.classList.add("flash"); }
 }
 function showTab() {
   const tab = (location.hash === "#incidents" || location.hash === "#history") ? "incidents" : "status";
@@ -122,6 +136,8 @@ function showTab() {
   if (tab === "incidents") window.scrollTo({ top: 0 });
 }
 document.addEventListener("click", (e) => {
+  const bar = e.target.closest?.(".ub[data-day]");
+  if (bar) { jumpToDay(Number(bar.dataset.day)); return; }
   const w = e.target.closest?.("[data-win]");
   if (w) { win = w.dataset.win; try { localStorage.setItem("dockbare.window", win); } catch (err) { /* private mode */ } if (lastData) render(lastData); return; }
   const t = e.target.closest?.(".upd-toggle");

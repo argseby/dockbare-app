@@ -69,6 +69,7 @@ def test_public_fields_and_badge(uptime_app, monkeypatch):
     assert item["name"] == "Website" and item["url"] == "https://example.com" and item["icon"] == "🌐" and item["description"] == "Main site"
     assert set(item["uptime"]) == {"d1", "d7", "d30", "d365"} and pl["app"]["url"].startswith("https://github.com/")
     assert len(item["history"]) == 365 and len(item["history_24h"]) == 24 and item["history_24h"][-1]["hours"] == 1
+    assert pl["timezone"] == core.settings.timezone
     assert item["history_24h"][-1]["pct"] == 100.0 and item["history_24h"][0]["pct"] is None  # monitoring began just now
     r = anon.get("/badge.svg")
     assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"All systems operational" in r.data and b"#111a2e" in r.data

@@ -836,7 +836,7 @@ class Uptime:
             groups = [{**groups[0], "items": sorted(merged_items, key=lambda i: i["name"].lower()), "announcements": merged_anns, "merged": True}]
         return {"title": s.get("public_title") or "Service status", "updated": time.time(), "overall": overall, "groups": groups, "incidents": incidents,
                 "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "history_hours": HISTORY_HOURS_PUBLIC, "unreachable": unreachable, "windows": WINDOWS,
-                "app": {"name": "Dockbare", "url": REPO_URL}}
+                "app": {"name": "Dockbare", "url": REPO_URL}, "timezone": self.m.settings.timezone}
 
     def badge(self, label: str = "") -> dict:
         """Overall status in the shields.io endpoint format (plus the raw overall state)."""

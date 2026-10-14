@@ -17,7 +17,7 @@ export function historyBars(history, { height = 24 } = {}) {
   const bw = 6, gap = 2, w = n * (bw + gap) - gap;
   const rects = history.map((h, i) => {
     const title = h.pct == null ? `${label(h)}\nNo data` : `${label(h)}\n${h.pct >= 99.995 ? "100" : h.pct.toFixed(2)}% available${h.down ? `\n${downLabel(h.down)} downtime` : ""}${h.kinds && h.kinds.length ? ` (${h.kinds.join(", ")})` : ""}`;
-    return `<rect class="ub ub-${cls(h.pct)}" x="${i * (bw + gap)}" y="0" width="${bw}" height="${height}" rx="1.5" data-tip="${esc(title)}" aria-label="${esc(title.replace(/\n/g, ", "))}"></rect>`;
+    return `<rect class="ub ub-${cls(h.pct)}" x="${i * (bw + gap)}" y="0" width="${bw}" height="${height}" rx="1.5" data-tip="${esc(title)}" data-day="${h.day}" aria-label="${esc(title.replace(/\n/g, ", "))}"></rect>`;
   }).join("");
   const unit = history[0] && history[0].hours ? "hours" : "days";
   return `<svg class="ubars" viewBox="0 0 ${w} ${height}" preserveAspectRatio="none" role="img" aria-label="Availability, last ${n} ${unit}">${rects}</svg>`;

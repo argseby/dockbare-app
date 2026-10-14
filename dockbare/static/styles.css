@@ -514,7 +514,6 @@ i.ub-ok { background: #16a34a; } i.ub-warn { background: #f59e0b; } i.ub-bad { b
   .st-hero h1 { font-size: 21px; }
   .st-hero p { font-size: 13.5px; }
   .st-svc { padding: 12px 14px; }
-  .st-svc .row .badge { margin-left: auto; }
   .st-svc .row { gap: 8px; }
   .st-notice .n-top b { flex-basis: 100%; order: 3; font-size: 15px; }
   .st-notice .n-top .more { order: 2; }
@@ -673,3 +672,7 @@ i.ub-ok { background: #16a34a; } i.ub-warn { background: #f59e0b; } i.ub-bad { b
   .pipe .step > span:last-child { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .pipe .packet, .pipe .node { animation: none; } .pipe .packet { left: calc(100% - 8px); opacity: 1; } }
+.ubars .ub[data-day] { cursor: pointer; }
+.st-day { scroll-margin-top: 16px; }
+.st-day.flash h3 { animation: day-flash 1.6s ease-out; }
+@keyframes day-flash { 0%, 40% { color: var(--primary); } 100% { color: inherit; } }
