@@ -45,11 +45,12 @@ function service(i) {
     : degraded ? `<span class="badge solid-warn">${icon("alert", "sm")} partial outage</span>` : `<span class="badge ok" title="operational">${icon("check", "sm")}</span>`;
   let host = i.url || "";
   try { host = new URL(i.url).host; } catch (e) { /* show as is */ }
-  const meta = i.description || i.url ? `<div class="svc-meta">${i.description ? `<span>${esc(i.description)}</span>` : ""}${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${icon("globe", "sm")} ${esc(host)}</a>` : ""}</div>` : "";
+  const link = i.url ? `<a class="svc-link" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer" title="${esc(i.url)}">${esc(host)} ${icon("external-link", "sm")}</a>` : "";
+  const meta = i.description ? `<div class="svc-meta"><span>${esc(i.description)}</span></div>` : "";
   const parts = i.components && i.components.length ? `<div class="svc-parts">${i.components.map((c) => `<span class="part" title="${esc(c.status === "down" ? (KIND_LABEL[c.kind] || c.kind || "down") : c.status === "up" ? "operational" : "no data")}"><span class="dot ${c.status === "down" ? "bad" : c.status === "up" ? "ok" : "off"}"></span>${esc(c.name)}</span>`).join("")}</div>` : "";
-  const site = i.site ? `<span class="badge outline site" title="hosted on ${esc(i.site)}">${icon("globe", "sm")} ${esc(i.site)}</span>` : "";
+  const site = i.site ? ` title="hosted on ${esc(i.site)}${i.site_checked ? `, refreshed ${esc(ago(i.site_checked))}` : ""}"` : "";
   return `<div class="st-svc ${down ? "is-down" : ""} ${degraded ? "is-degraded" : ""} ${ic ? "has-icon" : ""}">
-    <div class="row"><span class="dot ${down ? "bad" : degraded ? "warn" : "ok"}"></span>${ic}<b class="name">${esc(i.name)}</b>${badge}${site}
+    <div class="row"><span class="dot ${down ? "bad" : degraded ? "warn" : "ok"}"></span>${ic}<b class="name"${site}>${esc(i.name)}</b>${badge}${link}
       <span class="stats" title="availability over the last 24 hours, 7 days and 30 days"><span><em>24h</em>${pct(i.uptime.d1)}</span><span><em>7d</em>${pct(i.uptime.d7)}</span><span><em>30d</em>${pct(i.uptime.d30)}</span></span></div>
     ${meta}
     ${down || degraded ? `<div class="since">${icon("clock", "sm")} since ${esc(fmt(i.since))}</div>` : ""}
@@ -80,7 +81,7 @@ async function load() {
   const chips = [["check", items.length - downItems.length - degradedItems.length, "operational"], ["x", downItems.length, "down"], ["alert", degradedItems.length, "degraded"], ["alert", activeInc.length, activeInc.length === 1 ? "incident" : "incidents"], ["wrench", inMaint.length + active.filter((a) => a.upcoming).length, "maintenance"]]
     .filter(([, n], i) => n || i === 0).map(([ic2, n, l]) => `<span class="chip" title="${l}">${icon(ic2, "sm")} ${n}<span class="lbl"> ${l}</span></span>`).join("");
   $("#hero").className = `st-status st-status--${d.overall}`;
-  $("#hero").innerHTML = `${icon(ic)}<span class="txt">${esc(text)}</span><span class="chips">${chips}</span>`;
+  $("#hero").innerHTML = `${icon(ic)}<span class="txt">${esc(text)}</span><span class="chips">${chips}</span><span class="reason">${esc(subBits.join(" · "))}</span>`;
   const nInc = activeInc.length, nMaint = active.length - activeInc.length;
   $("#announcements").innerHTML = active.length
     ? `<div class="st-section"><div class="st-section-h"><h2>Active</h2><span class="muted">${[nInc ? `${nInc} ${nInc === 1 ? "incident" : "incidents"}` : "", nMaint ? `${nMaint} maintenance` : ""].filter(Boolean).join(" · ")}</span></div>${active.map((a) => announcement(a, a.group)).join("")}</div>`
@@ -91,7 +92,7 @@ async function load() {
   const hists = items.map((i) => i.history || []).filter((h) => h.length);
   $("#overview").innerHTML = hists.length ? `<div class="st-section"><div class="st-overview"><div class="st-section-h"><h2>${icon("chart", "sm")} Last ${d.history_days} days</h2><span class="muted" title="30-day availability, all services">${icon("activity", "sm")} ${pct(avgPct(items))}</span></div>${historyBars(combine(hists), { height: 22 })}${axis(d.history_days)}${legend()}</div></div>` : "";
   const groupName = (g) => g.name;
-  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "solid-danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}<span class="muted">${g.items.length ? `<span title="30-day availability">${icon("activity", "sm")} ${pct(avgPct(g.items))}</span>` : ""}${g.checked_at ? ` · <span title="last check">${icon("clock", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}</div>`).join("")}</div>`;
+  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "solid-danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}<span class="muted">${g.items.length ? `<span title="30-day availability">${icon("activity", "sm")} ${pct(avgPct(g.items))}</span>` : ""}${g.checked_at ? ` · <span title="refreshed from this site">${icon("refresh", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}${g.merged ? (d.unreachable || []).map((n) => `<div class="st-svc is-off"><div class="row"><span class="dot off"></span>${icon("globe", "sm")}<b class="name">${esc(n)}</b><span class="badge solid-danger">${icon("x", "sm")} unreachable</span><span class="stats">no data while unreachable</span></div></div>`).join("") : ""}</div>`).join("")}</div>`;
   const hist = [...(d.announcements || []).map((a) => ({ name: a.title, kind: a.type === "incident" ? `${a.severity || ""} incident`.trim() : "maintenance", cls: a.type === "incident" ? (a.severity === "major" ? "bad" : "warn") : "info", started_at: a.starts_at, ended_at: a.resolved_at || a.ends_at, duration: (a.resolved_at || a.ends_at || Date.now() / 1000) - a.starts_at, message: a.message, updates: a.updates })),
     ...(d.incidents || []).map((i) => ({ ...i, cls: i.ended_at ? "ok" : "bad" }))].sort((a, b) => b.started_at - a.started_at);
   const days = new Map();

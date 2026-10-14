@@ -66,11 +66,15 @@ SERVICE_DEFAULTS = {
 }
 STR_LIMITS = {"public_url": 300, "public_icon": 300, "public_description": 160, "url": 500}
 CHECK_PREFIX = "check:"  # incidents of external checks are keyed "check:<id>"
-BADGE = {
-    "operational": ("all systems operational", "#2da44e"),
-    "degraded": ("partial outage", "#bf8700"),
-    "outage": ("major outage", "#cf222e"),
-    "maintenance": ("maintenance", "#0969da"),
+BADGE = {  # message, shields color, dot color on dark / light pill
+    "operational": ("all systems operational", "#2da44e", "#22c55e", "#16a34a"),
+    "degraded": ("partial outage", "#bf8700", "#f59e0b", "#d97706"),
+    "outage": ("major outage", "#cf222e", "#ef4444", "#dc2626"),
+    "maintenance": ("maintenance", "#0969da", "#3b82f6", "#2563eb"),
+}
+BADGE_THEMES = {  # background, border, text, muted label
+    "dark": ("#111a2e", "#233049", "#e5eaf3", "#8593ad"),
+    "light": ("#ffffff", "#e2e8f0", "#0f172a", "#64748b"),
 }
 SETTINGS_DEFAULTS = {
     "poll_seconds": 15,
@@ -775,7 +779,8 @@ class Uptime:
                 remote = st.get("remote") or {}
                 up_info = remote.get("uptime") or {}
                 online = not (p["alert_active"] or st.get("ok") is False)
-                groups.append({"name": p.get("display_name") or up_info.get("public_group_name") or p["name"], "self": False, "online": online, "checked_at": st.get("checked_at"),
+                groups.append({"name": p.get("display_name") or up_info.get("public_group_name") or p["name"], "self": False, "online": online,
+                               "checked_at": st.get("refreshed_at") or st.get("checked_at"),
                                "items": (up_info.get("public_items") or []) if online else [], "announcements": (up_info.get("announcements") or []) if online else []})
         all_items = [i for g in groups for i in g["items"]]
         down = [i for i in all_items if i["status"] == "down"] + [g for g in groups if not g["online"]]
@@ -800,7 +805,7 @@ class Uptime:
         unreachable = [g["name"] for g in groups if not g["online"]]
         if s.get("public_merge_peers") and len(groups) > 1:
             # one flat section: peers' items and announcements are tagged with their site instead
-            merged_items = [i for g in groups for i in ({**i, "site": None if g["self"] else g["name"]} for i in g["items"])]
+            merged_items = [i for g in groups for i in ({**i, "site": None if g["self"] else g["name"], "site_checked": None if g["self"] else g.get("checked_at")} for i in g["items"])]
             merged_anns = [{**a, "site": None if g["self"] else g["name"]} for g in groups for a in g["announcements"]]
             groups = [{**groups[0], "items": sorted(merged_items, key=lambda i: i["name"].lower()), "announcements": merged_anns, "merged": True}]
         return {"title": s.get("public_title") or "Service status", "updated": time.time(), "overall": overall, "groups": groups, "incidents": incidents,
@@ -809,9 +814,10 @@ class Uptime:
     def badge(self, label: str = "") -> dict:
         """Overall status in the shields.io endpoint format (plus the raw overall state)."""
         pl = self.public_payload()
-        message, color = BADGE.get(pl["overall"], (pl["overall"], "#6e7781"))
-        label = re.sub(r"[^\w .:/()+-]", "", str(label or ""))[:40].strip() or "status"
-        return {"schemaVersion": 1, "label": label, "message": message, "color": color, "overall": pl["overall"], "updated": pl["updated"]}
+        message, color, dot_dark, dot_light = BADGE.get(pl["overall"], (pl["overall"], "#6e7781", "#8593ad", "#64748b"))
+        label = re.sub(r"[^\w .:/()+-]", "", str(label or ""))[:40].strip()
+        return {"schemaVersion": 1, "label": label or "status", "custom_label": label, "message": message, "color": color,
+                "dot": {"dark": dot_dark, "light": dot_light}, "overall": pl["overall"], "updated": pl["updated"]}
 
     # ------------------------------------------------- public item fields
     @staticmethod
@@ -1249,6 +1255,42 @@ class Uptime:
     def housekeeping(self) -> None:
         keep = int(self.settings().get("incident_keep_days", 365))
         self.m.db.execute("DELETE FROM incidents WHERE ended_at IS NOT NULL AND ended_at < ?", (time.time() - keep * 86400,))
+
+
+def _text_width(text: str, size: float = 13, bold: bool = False) -> float:
+    """Rough width of UI-font text: per-glyph classes instead of one average, so short/wide words fit."""
+    narrow, wide = set("iljtfrI !.,:;'|"), set("mwMW@")
+    w = 0.0
+    for ch in text:
+        w += 0.33 if ch in narrow else 0.86 if ch in wide else 0.66 if ch.isupper() or ch.isdigit() else 0.56
+    return w * size * (1.06 if bold else 1.0)
+
+
+def badge_pill_svg(label: str, message: str, dot: str, theme: str = "dark") -> str:
+    """Status badge in the look of the status page: a rounded pill with a glowing status dot."""
+    bg, border, text, muted = BADGE_THEMES.get(theme, BADGE_THEMES["dark"])
+    message = message[:1].upper() + message[1:]
+    h, pad, gap = 32, 14, 9
+    lw = _text_width(label, 12.5) if label else 0.0
+    mw = _text_width(message, 13, bold=True)
+    x = pad
+    parts = []
+    if label:
+        parts.append(f'<text x="{x:.1f}" y="20.5" font-size="12.5" font-weight="500" fill="{muted}" textLength="{lw:.1f}" lengthAdjust="spacingAndGlyphs">{html.escape(label)}</text>')
+        x += lw + gap + 2
+    cx = x + 5
+    parts.append(f'<circle cx="{cx:.1f}" cy="16" r="7" fill="{dot}" fill-opacity=".2"/><circle cx="{cx:.1f}" cy="16" r="4" fill="{dot}"/>')
+    x = cx + 5 + gap
+    parts.append(f'<text x="{x:.1f}" y="20.5" font-size="13" font-weight="600" fill="{text}" textLength="{mw:.1f}" lengthAdjust="spacingAndGlyphs">{html.escape(message)}</text>')
+    total = int(round(x + mw + pad))
+    title = html.escape(f"{label}: {message}" if label else message)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{total}" height="{h}" viewBox="0 0 {total} {h}" role="img" aria-label="{title}">'
+        f'<title>{title}</title>'
+        f'<rect x=".5" y=".5" width="{total - 1}" height="{h - 1}" rx="{(h - 1) / 2}" fill="{bg}" stroke="{border}"/>'
+        '<g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Inter,Roboto,Helvetica,Arial,sans-serif">'
+        + "".join(parts) + "</g></svg>"
+    )
 
 
 def badge_svg(label: str, message: str, color: str) -> str:

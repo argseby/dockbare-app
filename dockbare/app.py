@@ -210,13 +210,19 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
 
     @app.get("/badge.svg")
     def badge_svg_route():
-        """Embeddable status badge (<img src=".../badge.svg">), e.g. for a README; ?label= changes the left text."""
-        from .uptime import badge_svg
+        """Embeddable status badge (<img src=".../badge.svg">). ?label= adds/changes the label, ?theme=light|dark
+        picks the pill colours, ?style=flat gives the classic shields.io look."""
+        from .uptime import badge_pill_svg, badge_svg
 
         if not core.uptime.settings().get("public_enabled"):
             return jsonify({"error": "Not found"}), 404
         b = core.uptime.badge(request.args.get("label", ""))
-        return _badge_response(badge_svg(b["label"], b["message"], b["color"]), "image/svg+xml; charset=utf-8")
+        theme = "light" if request.args.get("theme") == "light" else "dark"
+        if request.args.get("style") == "flat":
+            svg = badge_svg(b["label"], b["message"], b["color"])
+        else:
+            svg = badge_pill_svg(b["custom_label"], b["message"], b["dot"][theme], theme)
+        return _badge_response(svg, "image/svg+xml; charset=utf-8")
 
     @app.get("/badge.json")
     def badge_json_route():

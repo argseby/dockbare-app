@@ -266,22 +266,67 @@ class Peers:
                 elif consecutive == 1:
                     self.m.event("warning", "peer.check_failed", f"Peer '{p['name']}' check failed: {error}")
             # keep the last known remote report while the peer is unreachable (names stay stable on the status page)
-            status = {"ok": ok, "checked_at": now, "error": error, "remote": st if ok else prev.get("remote"), "problems": list((st or {}).get("problems") or [])}
+            status = {"ok": ok, "checked_at": now, "error": error, "remote": st if ok else prev.get("remote"),
+                      "refreshed_at": now if ok else prev.get("refreshed_at"), "problems": list((st or {}).get("problems") or [])}
             self.m.db.execute(
                 "UPDATE peers SET last_checked_at=?, last_ok_at=COALESCE(?, last_ok_at), consecutive_failures=?, alert_active=?, status=? WHERE id=?",
                 (now, now if ok else None, consecutive, int(alert_active), json.dumps(status), peer_id))
         return self.get(peer_id)
 
+    def _page_shows_peers(self) -> bool:
+        up = getattr(self.m, "uptime", None)
+        s = up.settings() if up else {}
+        return bool(s.get("public_enabled") and s.get("public_show_peers"))
+
     def check_due(self) -> None:
+        """Scheduled once a minute: full checks at each peer's interval, plus a report refresh every minute
+        while the public status page shows peers (so changes on a peer appear within about two minutes)."""
         now = time.time()
+        live = self._page_shows_peers()
         for p in self.list():
             if not p["enabled"]:
                 continue
-            if (p.get("last_checked_at") or 0) + p["interval_minutes"] * 60 <= now:
-                try:
+            st = p.get("status") or {}
+            try:
+                if (p.get("last_checked_at") or 0) + p["interval_minutes"] * 60 <= now:
                     self.check(p["id"])
-                except Exception:  # noqa: BLE001
-                    log.exception("Peer check failed for %s", p["id"])
+                elif st.get("ok") is False and (st.get("retried_at") or st.get("checked_at") or 0) + 55 <= now:
+                    self.retry_down(p["id"])  # a peer that was rebuilt comes back within a minute
+                elif live and st.get("ok") and (st.get("refreshed_at") or st.get("checked_at") or 0) + 55 <= now:
+                    self.refresh_remote(p["id"])
+            except Exception:  # noqa: BLE001
+                log.exception("Peer check failed for %s", p["id"])
+
+    def retry_down(self, peer_id: str) -> bool:
+        """Probe an unreachable peer between scheduled checks. Only a success is recorded (as a full check,
+        which clears the alert and notifies); a failure is not counted, so alert timing stays as configured."""
+        with self._lock:
+            p = self.get(peer_id, with_token=True)
+            if not p or not p["enabled"]:
+                return False
+            try:
+                self._fetch(p["url"], p["token"], p["verify_tls"], p["timeout"])
+            except PeerError:
+                status = {**(p.get("status") or {}), "retried_at": time.time()}
+                self.m.db.execute("UPDATE peers SET status=? WHERE id=?", (json.dumps(status), peer_id))
+                return False
+        self.check(peer_id)
+        return True
+
+    def refresh_remote(self, peer_id: str) -> bool:
+        """Re-fetch a healthy peer's report for the status page. Failure counting, alerts and problem
+        notifications are left to the scheduled check; a failed refresh changes nothing."""
+        with self._lock:
+            p = self.get(peer_id, with_token=True)
+            if not p or not p["enabled"] or not (p.get("status") or {}).get("ok"):
+                return False
+            try:
+                st = self._fetch(p["url"], p["token"], p["verify_tls"], p["timeout"])
+            except PeerError:
+                return False
+            status = {**p["status"], "remote": st, "refreshed_at": time.time()}
+            self.m.db.execute("UPDATE peers SET status=? WHERE id=?", (json.dumps(status), peer_id))
+        return True
 
     def check_all(self) -> None:
         for p in self.list():
@@ -293,6 +338,8 @@ class Peers:
 
         self.sync_env_peers()
         self.m.scheduler.add_job(self.check_due, IntervalTrigger(seconds=60), id="peers", replace_existing=True)
+        # verify every peer right after a (re)start instead of waiting for the first due interval
+        self.m.scheduler.add_job(self.check_all, "date", id="peers-initial", replace_existing=True)
 
     def summary(self) -> list[dict]:
         out = []

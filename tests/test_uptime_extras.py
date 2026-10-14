@@ -67,13 +67,15 @@ def test_public_fields_and_badge(uptime_app, monkeypatch):
     item = anon.get("/api/uptime/public").get_json()["groups"][0]["items"][0]
     assert item["name"] == "Website" and item["url"] == "https://example.com" and item["icon"] == "🌐" and item["description"] == "Main site"
     r = anon.get("/badge.svg")
-    assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"all systems operational" in r.data
+    assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"All systems operational" in r.data and b"#111a2e" in r.data
+    assert b"#ffffff" in anon.get("/badge.svg?theme=light").data and b"Homelab" in anon.get("/badge.svg?label=Homelab").data
+    assert b"all systems operational" in anon.get("/badge.svg?style=flat").data and b"linearGradient" in anon.get("/badge.svg?style=flat").data
     assert r.headers["Access-Control-Allow-Origin"] == "*" and "max-age=60" in r.headers["Cache-Control"]
     assert anon.get("/badge.json?label=shop").get_json() == {"schemaVersion": 1, "label": "shop", "message": "all systems operational", "color": "#2da44e"}
     d.containers["web"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1, "health": None})
     core.uptime._failing_since["web"] = time.time() - 100
     core.uptime.poll()
-    assert b"major outage" in anon.get("/badge.svg").data
+    assert b"Major outage" in anon.get("/badge.svg").data
 
 
 def test_external_checks(uptime_app, monkeypatch):
@@ -220,3 +222,68 @@ def test_public_page_merges_peers(uptime_app, monkeypatch):
         c.post(f"/api/peers/{p['id']}/check")
     pl = anon.get("/api/uptime/public").get_json()
     assert pl["unreachable"] == ["Garage"] and len(pl["groups"]) == 1
+
+
+def test_peer_reports_refresh_while_page_shows_them(uptime_app, monkeypatch):
+    from dockbare import peers as peers_mod
+
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    _quiet(core, monkeypatch)
+    anon = app.test_client()
+    remote = {"app": "dockbare", "hostname": "b", "version": "3.0.0", "problems": [], "uptime": {"public_group_name": "Garage", "public_items": [], "announcements": []}}
+    calls = []
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: (calls.append(1), dict(remote))[1])
+    p = c.post("/api/peers", json={"name": "Server B", "url": "https://b.example", "token": "t", "interval_minutes": 60}).get_json()
+    c.post(f"/api/peers/{p['id']}/check")
+    n = len(calls)
+    core.peers.check_due()  # not due, page off -> nothing
+    assert len(calls) == n
+    c.put("/api/uptime/settings", json={"public_enabled": True})
+    core.peers.check_due()  # fresh enough (just checked) -> nothing
+    assert len(calls) == n
+    core.db.execute("UPDATE peers SET status=json_set(status, '$.refreshed_at', ?) WHERE id=?", (time.time() - 120, p["id"]))
+    remote["uptime"]["public_group_name"] = "Garage rack"
+    core.peers.check_due()
+    assert len(calls) == n + 1
+    pl = anon.get("/api/uptime/public").get_json()
+    assert pl["groups"][1]["name"] == "Garage rack" and time.time() - pl["groups"][1]["checked_at"] < 5
+    p = c.get("/api/peers").get_json()["peers"][0]
+    assert p["consecutive_failures"] == 0 and p["alert_active"] is False and p["status"]["ok"] is True
+    # a failing refresh changes nothing; the scheduled check still owns alerting
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: (_ for _ in ()).throw(peers_mod.PeerError("down")))
+    core.db.execute("UPDATE peers SET status=json_set(status, '$.refreshed_at', ?) WHERE id=?", (time.time() - 120, p["id"]))
+    core.peers.check_due()
+    p2 = c.get("/api/peers").get_json()["peers"][0]
+    assert p2["consecutive_failures"] == 0 and p2["status"]["ok"] is True and p2["status"]["remote"]["uptime"]["public_group_name"] == "Garage rack"
+
+
+def test_unreachable_peer_recovers_within_a_minute(uptime_app, monkeypatch):
+    from dockbare import peers as peers_mod
+
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    _quiet(core, monkeypatch)
+    boom = lambda self, url, token, verify, timeout: (_ for _ in ()).throw(peers_mod.PeerError("connection refused"))  # noqa: E731
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", boom)
+    p = c.post("/api/peers", json={"name": "Server B", "url": "https://b.example", "token": "t", "interval_minutes": 60, "failure_threshold": 2}).get_json()
+    for _ in range(50):  # the background check after save
+        if c.get("/api/peers").get_json()["peers"][0].get("last_checked_at"):
+            break
+        time.sleep(0.05)
+    for _ in range(2):
+        p = c.post(f"/api/peers/{p['id']}/check").get_json()
+    assert p["alert_active"] is True and p["status"]["ok"] is False
+    failures = p["consecutive_failures"]
+    core.db.execute("UPDATE peers SET status=json_set(status, '$.checked_at', ?) WHERE id=?", (time.time() - 120, p["id"]))
+    core.peers.check_due()  # still down: retried, but not counted as another failure
+    p = c.get("/api/peers").get_json()["peers"][0]
+    assert p["consecutive_failures"] == failures and p["status"].get("retried_at")
+    core.peers.check_due()  # retried less than a minute ago -> no probe
+    # the peer is back (e.g. rebuilt): the next minute tick records it without waiting for the 60 min interval
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: {"app": "dockbare", "hostname": "b", "version": "3.0.0", "problems": []})
+    core.db.execute("UPDATE peers SET status=json_set(status, '$.retried_at', ?) WHERE id=?", (time.time() - 120, p["id"]))
+    core.peers.check_due()
+    p = c.get("/api/peers").get_json()["peers"][0]
+    assert p["alert_active"] is False and p["consecutive_failures"] == 0 and p["status"]["ok"] is True
+    assert "peer.up" in [e["kind"] for e in c.get("/api/events").get_json()]

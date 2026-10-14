@@ -147,9 +147,11 @@ public page. **Services** group several containers and/or checks into one entry 
 database + payment API); either any member being down marks the service as down, or it shows a partial outage
 until all members are down, and each member can be renamed for the page. Containers, checks and services can carry
 an icon (image URL or emoji), a website link and a one-line description for the page. Peers' services get their own
-section per site, or one flat list with a small site tag when "Show peers' services in the same list" is on. With the page enabled, `/badge.svg` is a live shields-style **status
-badge** ("all systems operational", "partial outage", "major outage", "maintenance") to embed anywhere, and
-`/badge.json` serves the same in the shields.io endpoint format; Uptime → Settings has copy-ready HTML and
+section per site, or one flat list with a small site tag when "Show peers' services in the same list" is on; while
+the page shows peers, their reports are refreshed every minute independently of the alerting interval, so a change
+on a peer appears within about two minutes. An unreachable peer counts as a partial outage and is named on the page. With the page enabled, `/badge.svg` is a live **status badge** in the look of the page ("All systems
+operational", "Partial outage", "Major outage", "Maintenance"; `?theme=light`, `?label=…`, or `?style=flat` for the
+classic shields look) to embed anywhere, and `/badge.json` serves the same in the shields.io endpoint format; Uptime → Settings has copy-ready HTML and
 Markdown snippets that link the badge to the page.
 
 ## Command line
