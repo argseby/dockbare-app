@@ -339,7 +339,26 @@ class Peers:
         self.sync_env_peers()
         self.m.scheduler.add_job(self.check_due, IntervalTrigger(seconds=60), id="peers", replace_existing=True)
         # verify every peer right after a (re)start instead of waiting for the first due interval
-        self.m.scheduler.add_job(self.check_all, "date", id="peers-initial", replace_existing=True)
+        self.m.scheduler.add_job(self.verify_on_start, "date", id="peers-initial", replace_existing=True)
+
+    def verify_on_start(self, attempt: int = 1) -> None:
+        """Check every peer right after a (re)start. Peers that fail, e.g. because they are booting alongside
+        us, are probed again after 15 s (up to three more times, success-only so alerts are not hurried)."""
+        if attempt == 1:
+            self.check_all()
+        else:
+            for p in self.list():
+                if p["enabled"] and (p.get("status") or {}).get("ok") is False:
+                    try:
+                        self.retry_down(p["id"])
+                    except Exception:  # noqa: BLE001
+                        log.exception("Peer retry failed for %s", p["id"])
+        failed = [p["name"] for p in self.list() if p["enabled"] and (p.get("status") or {}).get("ok") is False]
+        if failed and attempt < 4:
+            from datetime import datetime, timedelta
+
+            self.m.scheduler.add_job(self.verify_on_start, "date", run_date=datetime.now(self.m.scheduler.timezone) + timedelta(seconds=15),
+                                     args=[attempt + 1], id="peers-initial", replace_existing=True)
 
     def summary(self) -> list[dict]:
         out = []

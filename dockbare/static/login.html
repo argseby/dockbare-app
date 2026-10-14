@@ -10,9 +10,9 @@
 </head>
 <body>
 <div class="login-wrap">
-  <div class="login">
+  <div class="login login--stack">
     <div class="brand"><img src="/static/logo.svg" alt=""><span class="name">Dockbare</span></div>
-    <div class="card"><div class="card-c">
+    <div class="card login-card"><div class="card-c">
       <form id="login-form" autocomplete="on">
         <div id="notice"></div>
         <div class="form-group"><label class="field" for="username">Username</label><input type="text" id="username" name="username" autocomplete="username" required autofocus></div>
@@ -22,7 +22,24 @@
         <div id="error" class="err"></div>
       </form>
     </div></div>
-    <p class="muted small center mt">Docker volume backup · encrypted · off-site</p>
+    <section class="login-teaser" aria-label="What Dockbare does">
+      <p class="login-tagline">Don't let vibe coding break your infrastructure: use a more or less vibe coded project to back it up.</p>
+      <div class="pipe" aria-hidden="true">
+        <div class="track"><span class="packet"></span></div>
+        <div class="steps">
+          <div class="step"><span class="node"><span class="ti" data-icon="container"></span></span><b>Volume</b><span>what your containers keep</span></div>
+          <div class="step"><span class="node"><span class="ti" data-icon="lock"></span></span><b>Archive</b><span>compressed and encrypted</span></div>
+          <div class="step"><span class="node"><span class="ti" data-icon="cloud-upload"></span></span><b>Off-site</b><span>FTP or SFTP, verified</span></div>
+          <div class="step"><span class="node"><span class="ti" data-icon="radar"></span></span><b>Watched</b><span>uptime and a status page</span></div>
+        </div>
+      </div>
+      <div class="login-tiles">
+        <div class="tile"><div class="label"><span class="ti" data-icon="hard-drive"></span> Volumes protected</div><div class="value">every single one</div><div class="sub">nightly, encrypted, off-site</div></div>
+        <div class="tile"><div class="label"><span class="ti" data-icon="cloud-upload"></span> Last backup</div><div class="value">03:00</div><div class="sub">like every night</div></div>
+        <div class="tile"><div class="label"><span class="ti" data-icon="activity"></span> Uptime, 30 days</div><div class="value">99.98%</div><div class="sub">the 0.02% was a power cable</div></div>
+      </div>
+    </section>
+    <p class="muted small center login-foot">Backups for the boxes in your basement · <a href="https://github.com/argseby/dockbare-app" target="_blank" rel="noopener"><span class="ti" data-icon="github"></span> open source</a></p>
   </div>
 </div>
 <script type="module" src="/static/login.js"></script>

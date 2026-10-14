@@ -1,3 +1,4 @@
+import { icon } from "./icons.js";
 const $ = (s) => document.querySelector(s);
 document.documentElement.dataset.theme = localStorage.getItem("dockbare.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 const form = $("#login-form"), err = $("#error"), btn = $("#submit");
@@ -39,3 +40,5 @@ form.addEventListener("submit", async (e) => {
   }
 });
 init();
+
+document.querySelectorAll(".ti[data-icon]").forEach((el) => { el.outerHTML = icon(el.dataset.icon, "sm"); });

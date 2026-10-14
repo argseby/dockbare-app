@@ -89,9 +89,11 @@ SETTINGS_DEFAULTS = {
     "public_group_name": "",
     "public_show_peers": True,
     "public_merge_peers": False,  # one flat list instead of one section per site
+    "history_assume_up": False,  # days before monitoring began count as up instead of "no data"
     "incident_keep_days": 365,
 }
-WINDOWS = {"d1": 86400, "d7": 7 * 86400, "d30": 30 * 86400}
+WINDOWS = {"d1": 86400, "d7": 7 * 86400, "d30": 30 * 86400, "d365": 365 * 86400}
+REPO_URL = "https://github.com/argseby/dockbare-app"
 HISTORY_DAYS_PUBLIC = 90
 HISTORY_DAYS_INTERNAL = 30
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
@@ -150,7 +152,7 @@ class Uptime:
                          "mode": "ignore" if w.get("mode") == "ignore" else "mute", "label": str(w.get("label") or "")[:60]})
         s["quiet_windows"] = wins
         s["public_group_name"] = str(s.get("public_group_name") or "").strip()[:80]
-        for b in ("monitor_new", "public_enabled", "public_show_peers", "public_merge_peers"):
+        for b in ("monitor_new", "public_enabled", "public_show_peers", "public_merge_peers", "history_assume_up"):
             s[b] = bool(s.get(b))
         self.m.db.set_setting("uptime", s)
         self.m.event("info", "settings.saved", "Uptime settings saved")
@@ -599,11 +601,13 @@ class Uptime:
             out[key] = round(100.0 * (1 - down / win), 3)
         return out
 
-    @staticmethod
-    def _history_from(spans: list, first: float | None, days: int, now: float) -> list[dict]:
-        """Per UTC day: availability percentage (None before monitoring began) and down seconds."""
+    def _history_from(self, spans: list, first: float | None, days: int, now: float) -> list[dict]:
+        """Per UTC day: availability percentage (None before monitoring began, unless the history is
+        assumed up) and down seconds."""
         today = int(now // 86400) * 86400
         start = today - (days - 1) * 86400
+        if self.settings().get("history_assume_up"):
+            first = start if first is None else min(first, start)
         out = []
         for i in range(days):
             a = start + i * 86400
@@ -631,7 +635,7 @@ class Uptime:
 
     def uptime_pct(self, container: str, now: float | None = None) -> dict:
         now = now or time.time()
-        return self._pct_from(self._incident_spans([container], now - WINDOWS["d30"], now)[container], now)
+        return self._pct_from(self._incident_spans([container], now - max(WINDOWS.values()), now)[container], now)
 
     def daily_history(self, container: str, days: int = HISTORY_DAYS_PUBLIC, now: float | None = None) -> list[dict]:
         now = now or time.time()
@@ -711,7 +715,7 @@ class Uptime:
         first_inc = min((m["incident"] for m in down), key=lambda i: i["started_at"]) if down else None
         seen = self._first_seen([m["key"] for m in members])
         keys = [k for k in s["members"] if k in seen]  # members that have ever been monitored
-        since = int(now // 86400) * 86400 - (HISTORY_DAYS_PUBLIC - 1) * 86400
+        since = min(int(now // 86400) * 86400 - (HISTORY_DAYS_PUBLIC - 1) * 86400, now - max(WINDOWS.values()))
         spans = self._merged_spans(keys, since, now, require_all=not s["down_if_any"])
         return {"id": s["id"], "name": s["name"], "service": True, "status": status,
                 "since": first_inc["started_at"] if first_inc else None, "kind": first_inc["kind"] if first_inc else None,
@@ -809,7 +813,8 @@ class Uptime:
             merged_anns = [{**a, "site": None if g["self"] else g["name"]} for g in groups for a in g["announcements"]]
             groups = [{**groups[0], "items": sorted(merged_items, key=lambda i: i["name"].lower()), "announcements": merged_anns, "merged": True}]
         return {"title": s.get("public_title") or "Service status", "updated": time.time(), "overall": overall, "groups": groups, "incidents": incidents,
-                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "unreachable": unreachable}
+                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "unreachable": unreachable, "windows": WINDOWS,
+                "app": {"name": "Dockbare", "url": REPO_URL}}
 
     def badge(self, label: str = "") -> dict:
         """Overall status in the shields.io endpoint format (plus the raw overall state)."""

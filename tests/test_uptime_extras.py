@@ -64,8 +64,10 @@ def test_public_fields_and_badge(uptime_app, monkeypatch):
     assert r.status_code == 200, r.get_json()
     assert c.put("/api/uptime/monitors/web", json={"public_url": "ftp://x"}).status_code == 400
     assert c.put("/api/uptime/monitors/web", json={"public_icon": "not an icon at all"}).status_code == 400
-    item = anon.get("/api/uptime/public").get_json()["groups"][0]["items"][0]
+    pl = anon.get("/api/uptime/public").get_json()
+    item = pl["groups"][0]["items"][0]
     assert item["name"] == "Website" and item["url"] == "https://example.com" and item["icon"] == "🌐" and item["description"] == "Main site"
+    assert set(item["uptime"]) == {"d1", "d7", "d30", "d365"} and pl["app"]["url"].startswith("https://github.com/")
     r = anon.get("/badge.svg")
     assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"All systems operational" in r.data and b"#111a2e" in r.data
     assert b"#ffffff" in anon.get("/badge.svg?theme=light").data and b"Homelab" in anon.get("/badge.svg?label=Homelab").data
@@ -287,3 +289,60 @@ def test_unreachable_peer_recovers_within_a_minute(uptime_app, monkeypatch):
     p = c.get("/api/peers").get_json()["peers"][0]
     assert p["alert_active"] is False and p["consecutive_failures"] == 0 and p["status"]["ok"] is True
     assert "peer.up" in [e["kind"] for e in c.get("/api/events").get_json()]
+
+
+def test_peers_are_verified_after_a_restart(settings, monkeypatch):
+    import dockbare.app as appmod
+    from dockbare import peers as peers_mod
+    from tests.conftest import FakeDocker
+    from tests.test_peers_remotes import UptimeDocker
+
+    calls = []
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: (calls.append(time.time()), {"app": "dockbare", "hostname": "b", "version": "3.0.0", "problems": []})[1])
+    monkeypatch.setattr(appmod, "DockerCtl", lambda *a, **k: UptimeDocker(FakeDocker()))
+    settings.testing = True
+    app = appmod.create_app(settings, start=True)
+    c = app.test_client()
+    c.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234"})
+    c.environ_base["HTTP_X_REQUESTED_WITH"] = "Dockbare"
+    c.post("/api/peers", json={"name": "Server B", "url": "https://b.example", "token": "t", "interval_minutes": 60})
+    for _ in range(100):  # background check after save
+        if c.get("/api/peers").get_json()["peers"][0].get("last_checked_at"):
+            break
+        time.sleep(0.05)
+    app.extensions["dockbare"].stop()
+    n = len(calls)
+    before = time.time()
+    app2 = appmod.create_app(settings, start=True)  # "rebuild": fresh process, same data
+    try:
+        for _ in range(100):
+            if len(calls) > n:
+                break
+            time.sleep(0.05)
+        assert len(calls) > n, "peers were not checked on startup"
+        c2 = app2.test_client()
+        c2.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234"})
+        c2.environ_base["HTTP_X_REQUESTED_WITH"] = "Dockbare"
+        for _ in range(100):
+            p = c2.get("/api/peers").get_json()["peers"][0]
+            if (p.get("last_checked_at") or 0) >= before:
+                break
+            time.sleep(0.05)
+        assert p["status"]["ok"] is True and p["last_checked_at"] >= before
+    finally:
+        app2.extensions["dockbare"].stop()
+
+
+def test_history_before_monitoring_can_be_assumed_up(uptime_app, monkeypatch):
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    _quiet(core, monkeypatch)
+    core.uptime.poll()
+    hist = core.uptime.daily_history("web", 90)
+    assert hist[0]["pct"] is None and hist[-1]["pct"] == 100.0  # fresh instance: no data before today
+    c.put("/api/uptime/settings", json={"history_assume_up": True})
+    hist = core.uptime.daily_history("web", 90)
+    assert all(day["pct"] == 100.0 for day in hist)
+    assert core.uptime.daily_history("never-seen", 7)[0]["pct"] == 100.0
+    c.put("/api/uptime/settings", json={"history_assume_up": False})
+    assert core.uptime.daily_history("web", 90)[0]["pct"] is None

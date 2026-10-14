@@ -16,6 +16,11 @@ const STATUS_LABEL = { investigating: "Investigating", identified: "Identified",
 const INC_STEPS = ["investigating", "identified", "monitoring", "resolved"];
 const STATUS_ICON = { investigating: "search", identified: "eye", monitoring: "activity", resolved: "check", scheduled: "calendar", in_progress: "wrench", completed: "check" };
 const stIcon = (st) => icon(STATUS_ICON[st] || "info", "sm");
+const WINDOWS = [["d1", "24h", "24 hours"], ["d7", "7d", "7 days"], ["d30", "30d", "30 days"], ["d365", "1y", "365 days"]];
+const REPO = "https://github.com/argseby/dockbare-app";
+let win = (() => { try { return localStorage.getItem("dockbare.window") || "d30"; } catch (e) { return "d30"; } })();
+const winLabel = () => (WINDOWS.find((w) => w[0] === win) || WINDOWS[2])[1];
+const winLong = () => (WINDOWS.find((w) => w[0] === win) || WINDOWS[2])[2];
 const KIND_LABEL = { down: "exited", dead: "dead", oom: "out of memory", unhealthy: "unhealthy", "restart-loop": "restart loop", missing: "missing", unreachable: "unreachable", "http-error": "HTTP error" };
 
 const theme = {
@@ -51,18 +56,22 @@ function service(i) {
   const site = i.site ? ` title="hosted on ${esc(i.site)}${i.site_checked ? `, refreshed ${esc(ago(i.site_checked))}` : ""}"` : "";
   return `<div class="st-svc ${down ? "is-down" : ""} ${degraded ? "is-degraded" : ""} ${ic ? "has-icon" : ""}">
     <div class="row"><span class="dot ${down ? "bad" : degraded ? "warn" : "ok"}"></span>${ic}<b class="name"${site}>${esc(i.name)}</b>${badge}${link}
-      <span class="stats" title="availability over the last 24 hours, 7 days and 30 days"><span><em>24h</em>${pct(i.uptime.d1)}</span><span><em>7d</em>${pct(i.uptime.d7)}</span><span><em>30d</em>${pct(i.uptime.d30)}</span></span></div>
+      <span class="stats" title="availability over the last ${winLong()}"><span><em>${winLabel()}</em>${pct((i.uptime || {})[win])}</span></span></div>
     ${meta}
     ${down || degraded ? `<div class="since">${icon("clock", "sm")} since ${esc(fmt(i.since))}</div>` : ""}
     ${parts}
     ${i.history ? historyBars(i.history) : ""}</div>`;
 }
 
-let timer;
+let timer, lastData = null;
 async function load() {
   let d;
   try { d = await fetch("/api/uptime/public", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }); }
   catch (e) { $("#hero").className = "st-hero st-hero--unknown"; $("#hero").innerHTML = `${icon("alert")}<div><h1>Status page unavailable</h1><p>Could not load data (${esc(e.message)}).</p></div>`; return; }
+  lastData = d;
+  render(d);
+}
+function render(d) {
   document.title = d.title; $("#title").textContent = d.title;
   const items = d.groups.flatMap((g) => g.items.map((i) => ({ ...i, group: g.name })));
   const downItems = items.filter((i) => i.status === "down"), degradedItems = items.filter((i) => i.status === "degraded");
@@ -77,7 +86,7 @@ async function load() {
   if (offline.length) subBits.push(`${offline.join(", ")} unreachable`);
   activeInc.forEach((a) => subBits.push(`${a.title} — ${(STATUS_LABEL[a.status] || a.status).toLowerCase()}${a.updates && a.updates[0] ? `, last update ${ago(a.updates[0].ts)}` : ""}`));
   if (inMaint.length) subBits.push(`maintenance: ${inMaint.map((a) => a.title).join(", ")}`);
-  if (!subBits.length) subBits.push(`${items.length} service(s)${d.groups.length > 1 ? ` across ${d.groups.length} locations` : ""} · 30-day availability ${pct(avgPct(items))}`);
+  if (!subBits.length) subBits.push(`${items.length} service(s)${d.groups.length > 1 ? ` across ${d.groups.length} locations` : ""} · ${winLabel()} availability ${pct(avgPct(items, win))}`);
   const chips = [["check", items.length - downItems.length - degradedItems.length, "operational"], ["x", downItems.length, "down"], ["alert", degradedItems.length, "degraded"], ["alert", activeInc.length, activeInc.length === 1 ? "incident" : "incidents"], ["wrench", inMaint.length + active.filter((a) => a.upcoming).length, "maintenance"]]
     .filter(([, n], i) => n || i === 0).map(([ic2, n, l]) => `<span class="chip" title="${l}">${icon(ic2, "sm")} ${n}<span class="lbl"> ${l}</span></span>`).join("");
   $("#hero").className = `st-status st-status--${d.overall}`;
@@ -90,16 +99,18 @@ async function load() {
     return `<a class="st-notice st-notice--${cls}" href="#incidents"><div class="n-top">${isInc && a.active ? '<span class="live"></span>' : ""}<span class="badge solid-${cls === "danger" ? "danger" : cls === "warn" ? "warn" : "info"}">${icon(isInc ? "alert" : "wrench", "sm")} ${isInc ? (a.severity === "major" ? "major" : "minor") : "maintenance"}</span><b>${esc(a.title)}</b><span class="more">${icon("chevron-right", "sm")}</span></div>
       <div class="n-sub"><span class="st">${stIcon(a.status)} ${esc(STATUS_LABEL[a.status] || a.status)}</span>${last ? ` · ${icon("clock", "sm")} ${esc(ago(last.ts))}` : ""}${!isInc && a.upcoming ? ` · ${icon("calendar", "sm")} ${esc(fmt(a.starts_at))}` : ""}${last && last.message ? ` — ${esc(last.message)}` : ""}</div></a>`; }).join("") : "";
   const hists = items.map((i) => i.history || []).filter((h) => h.length);
-  $("#overview").innerHTML = hists.length ? `<div class="st-section"><div class="st-overview"><div class="st-section-h"><h2>${icon("chart", "sm")} Last ${d.history_days} days</h2><span class="muted" title="30-day availability, all services">${icon("activity", "sm")} ${pct(avgPct(items))}</span></div>${historyBars(combine(hists), { height: 22 })}${axis(d.history_days)}${legend()}</div></div>` : "";
+  const seg = `<div class="st-seg" role="group" aria-label="availability window">${WINDOWS.map(([k, l, long]) => `<button type="button" class="${k === win ? "active" : ""}" data-win="${k}" title="availability over the last ${long}">${l}</button>`).join("")}</div>`;
+  $("#overview").innerHTML = items.length ? `<div class="st-section"><div class="st-overview"><div class="st-section-h"><h2>${icon("chart", "sm")} Last ${d.history_days} days</h2><span class="muted" title="${winLong()} availability, all services">${icon("activity", "sm")} ${pct(avgPct(items, win))}</span>${seg}</div>${hists.length ? `${historyBars(combine(hists), { height: 22 })}${axis(d.history_days)}${legend()}` : ""}</div></div>` : "";
   const groupName = (g) => g.name;
-  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "solid-danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}<span class="muted">${g.items.length ? `<span title="30-day availability">${icon("activity", "sm")} ${pct(avgPct(g.items))}</span>` : ""}${g.checked_at ? ` · <span title="refreshed from this site">${icon("refresh", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}${g.merged ? (d.unreachable || []).map((n) => `<div class="st-svc is-off"><div class="row"><span class="dot off"></span>${icon("globe", "sm")}<b class="name">${esc(n)}</b><span class="badge solid-danger">${icon("x", "sm")} unreachable</span><span class="stats">no data while unreachable</span></div></div>`).join("") : ""}</div>`).join("")}</div>`;
+  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "solid-danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}<span class="muted">${g.items.length ? `<span title="${winLong()} availability">${icon("activity", "sm")} ${pct(avgPct(g.items, win))}</span>` : ""}${g.checked_at ? ` · <span title="refreshed from this site">${icon("refresh", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}${g.merged ? (d.unreachable || []).map((n) => `<div class="st-svc is-off"><div class="row"><span class="dot off"></span>${icon("globe", "sm")}<b class="name">${esc(n)}</b><span class="badge solid-danger">${icon("x", "sm")} unreachable</span><span class="stats">no data while unreachable</span></div></div>`).join("") : ""}</div>`).join("")}</div>`;
   const hist = [...(d.announcements || []).map((a) => ({ name: a.title, kind: a.type === "incident" ? `${a.severity || ""} incident`.trim() : "maintenance", cls: a.type === "incident" ? (a.severity === "major" ? "bad" : "warn") : "info", started_at: a.starts_at, ended_at: a.resolved_at || a.ends_at, duration: (a.resolved_at || a.ends_at || Date.now() / 1000) - a.starts_at, message: a.message, updates: a.updates })),
     ...(d.incidents || []).map((i) => ({ ...i, cls: i.ended_at ? "ok" : "bad" }))].sort((a, b) => b.started_at - a.started_at);
   const days = new Map();
   hist.forEach((i) => { const k = new Date(i.started_at * 1000).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }); (days.get(k) || days.set(k, []).get(k)).push(i); });
   $("#incidents-count").textContent = active.length ? String(active.length) : "";
   $("#history").innerHTML = `<div class="st-section-h"><h2>${icon("clock", "sm")} Past ${d.history_days} days</h2><span class="muted">${hist.length ? `${hist.length} ${hist.length === 1 ? "event" : "events"}` : ""}</span></div>${hist.length ? [...days.entries()].map(([day, list]) => `<div class="st-day"><h3>${esc(day)}</h3><div class="st-tl">${list.map((i) => `<div class="item"><span class="dot ${i.cls || "ok"}"></span><div><b>${esc(i.name)}</b> <span class="badge outline">${esc(KIND_LABEL[i.kind] || i.kind)}</span>${i.ended_at ? "" : '<span class="badge solid-danger">ongoing</span>'}${i.message ? `<div class="msg">${esc(i.message)}</div>` : ""}</div><div class="when">${icon("clock", "sm")} ${esc(new Date(i.started_at * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))}${i.ended_at ? `<br>${esc(dur(i.duration))}` : ""}</div></div>`).join("")}</div></div>`).join("") : `<div class="st-tl"><div class="st-empty">No incidents in the last ${d.history_days} days.</div></div>`}`;
-  $("#foot").innerHTML = `${icon("refresh", "sm")} ${esc(new Date(d.updated * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))} · <a href="/admin" title="Sign in to Dockbare">Dockbare</a>`;
+  const repo = (d.app && d.app.url) || REPO;
+  $("#foot").innerHTML = `<span>${icon("refresh", "sm")} ${esc(new Date(d.updated * 1000).toLocaleTimeString(undefined, { timeStyle: "short" }))}</span><span class="sep">·</span><a href="${esc(repo)}" target="_blank" rel="noopener" title="Dockbare on GitHub">${icon("github", "sm")} Dockbare</a><span class="sep">·</span><a href="/admin" title="Sign in">Sign in</a>`;
 }
 function showTab() {
   const tab = (location.hash === "#incidents" || location.hash === "#history") ? "incidents" : "status";
@@ -109,6 +120,8 @@ function showTab() {
   if (tab === "incidents") window.scrollTo({ top: 0 });
 }
 document.addEventListener("click", (e) => {
+  const w = e.target.closest?.("[data-win]");
+  if (w) { win = w.dataset.win; try { localStorage.setItem("dockbare.window", win); } catch (err) { /* private mode */ } if (lastData) render(lastData); return; }
   const t = e.target.closest?.(".upd-toggle");
   if (!t) return;
   const more = t.previousElementSibling;
