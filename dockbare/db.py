@@ -153,6 +153,18 @@ CREATE TABLE IF NOT EXISTS container_seen (
     name TEXT PRIMARY KEY,
     first_seen REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS checks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS services (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS storage_samples (
     ts REAL NOT NULL,
     total_bytes INTEGER NOT NULL,

@@ -202,6 +202,33 @@ def create_app(settings: Settings | None = None, start: bool = True) -> Flask:
     def uptime_page():
         return status_page()
 
+    def _badge_response(payload, mimetype: str):
+        resp = Response(payload, mimetype=mimetype)
+        resp.headers["Cache-Control"] = "public, max-age=60"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    @app.get("/badge.svg")
+    def badge_svg_route():
+        """Embeddable status badge (<img src=".../badge.svg">), e.g. for a README; ?label= changes the left text."""
+        from .uptime import badge_svg
+
+        if not core.uptime.settings().get("public_enabled"):
+            return jsonify({"error": "Not found"}), 404
+        b = core.uptime.badge(request.args.get("label", ""))
+        return _badge_response(badge_svg(b["label"], b["message"], b["color"]), "image/svg+xml; charset=utf-8")
+
+    @app.get("/badge.json")
+    def badge_json_route():
+        """Same thing in the shields.io endpoint format."""
+        if not core.uptime.settings().get("public_enabled"):
+            return jsonify({"error": "Not found"}), 404
+        b = core.uptime.badge(request.args.get("label", ""))
+        resp = jsonify({k: b[k] for k in ("schemaVersion", "label", "message", "color")})
+        resp.headers["Cache-Control"] = "public, max-age=60"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
     @app.get("/admin")
     def admin():
         return page("index.html" if g.get("session") else "login.html")

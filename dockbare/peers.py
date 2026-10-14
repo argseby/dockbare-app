@@ -23,7 +23,7 @@ from .manager import Manager, ManagerError, fmt_bytes
 
 log = logging.getLogger("dockbare.peers")
 
-DEFAULTS = {"interval_minutes": 5, "failure_threshold": 3, "alert_on_problems": True, "verify_tls": True, "timeout": 15}
+DEFAULTS = {"interval_minutes": 5, "failure_threshold": 3, "alert_on_problems": True, "verify_tls": True, "timeout": 15, "display_name": ""}
 
 
 class PeerError(Exception):
@@ -92,6 +92,8 @@ class Peers:
         uptime = m.uptime.summary() if m.uptime else None
         if uptime and uptime.get("down"):
             problems.append("Containers down: " + ", ".join(uptime["down"]))
+        if uptime and uptime.get("checks_down"):
+            problems.append("Checks down: " + ", ".join(uptime["checks_down"]))
         return {
             "ok": True, "app": "dockbare", "version": __version__, "hostname": m.hostname, "time": now,
             "uptime": now - m.started_at, "docker_ok": docker_ok,
@@ -142,8 +144,10 @@ class Peers:
             v = data.get(k, existing.get(k) if existing else default)
             if k in ("interval_minutes", "failure_threshold", "timeout"):
                 v = int(v or default)
-            else:
+            elif isinstance(default, bool):
                 v = bool(v)
+            else:
+                v = str(v or "").strip()[:80]
             cfg[k] = v
         cfg["interval_minutes"] = max(1, min(1440, cfg["interval_minutes"]))
         cfg["failure_threshold"] = max(1, min(100, cfg["failure_threshold"]))

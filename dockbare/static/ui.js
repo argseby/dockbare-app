@@ -105,7 +105,8 @@ export function confirmDialog({ title = "Are you sure?", text = "", confirmLabel
       footer: `<button class="btn" data-close>Cancel</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" data-ok>${esc(confirmLabel)}</button>`,
       onClose: () => resolve(false),
     });
-    $("[data-ok]", m.el).addEventListener("click", () => { const out = formValues(m.el); m.close(); resolve(out || true); });
+    // resolve before closing: close() fires onClose, which would otherwise settle the promise with false first
+    $("[data-ok]", m.el).addEventListener("click", () => { const out = formValues(m.el); resolve(out || true); m.close(); });
   });
 }
 export function taskLogModal(taskId) {

@@ -576,9 +576,12 @@ def uptime_public():
 @api.get("/uptime")
 def uptime():
     c = core()
+    from .uptime import CHECK_DEFAULTS, MONITOR_DEFAULTS, SERVICE_DEFAULTS
+
     return jsonify({"containers": c.uptime.rows(), "incidents": c.uptime.incidents(limit=100), "settings": c.uptime.settings(),
                     "summary": c.uptime.summary(), "announcements": c.uptime.announcements(limit=50),
-                    "defaults": __import__("dockbare.uptime", fromlist=["MONITOR_DEFAULTS"]).MONITOR_DEFAULTS})
+                    "checks": c.uptime.check_rows(), "services": c.uptime.services(),
+                    "defaults": MONITOR_DEFAULTS, "check_defaults": CHECK_DEFAULTS, "service_defaults": SERVICE_DEFAULTS})
 
 
 @api.post("/uptime/poll")
@@ -600,6 +603,47 @@ def uptime_monitor(name):
 @api.delete("/uptime/monitors/<name>")
 def uptime_monitor_delete(name):
     core().uptime.delete_monitor(name)
+    return jsonify({"ok": True})
+
+
+@api.post("/uptime/checks")
+def uptime_check_add():
+    return jsonify(core().uptime.save_check(body()))
+
+
+@api.put("/uptime/checks/<cid>")
+def uptime_check_update(cid):
+    return jsonify(core().uptime.save_check(body(), cid))
+
+
+@api.delete("/uptime/checks/<cid>")
+def uptime_check_delete(cid):
+    core().uptime.delete_check(cid)
+    return jsonify({"ok": True})
+
+
+@api.post("/uptime/checks/<cid>/run")
+def uptime_check_run(cid):
+    c = core()
+    if not c.uptime.get_check(cid):
+        return err("Check not found.", 404)
+    state = c.uptime.run_checks(force=True, only=cid)
+    return jsonify(state.get(cid) or {})
+
+
+@api.post("/uptime/services")
+def uptime_service_add():
+    return jsonify(core().uptime.save_service(body()))
+
+
+@api.put("/uptime/services/<sid>")
+def uptime_service_update(sid):
+    return jsonify(core().uptime.save_service(body(), sid))
+
+
+@api.delete("/uptime/services/<sid>")
+def uptime_service_delete(sid):
+    core().uptime.delete_service(sid)
     return jsonify({"ok": True})
 
 

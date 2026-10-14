@@ -182,7 +182,8 @@ def _remotes_from_env() -> list[dict]:
 
 
 PEER_ENV_FIELDS = {"NAME": "name", "URL": "url", "TOKEN": "token", "INTERVAL": "interval_minutes", "THRESHOLD": "failure_threshold",
-                   "ALERT_ON_PROBLEMS": "alert_on_problems", "VERIFY_TLS": "verify_tls", "ENABLED": "enabled", "TIMEOUT": "timeout"}
+                   "ALERT_ON_PROBLEMS": "alert_on_problems", "VERIFY_TLS": "verify_tls", "ENABLED": "enabled", "TIMEOUT": "timeout",
+                   "DISPLAY_NAME": "display_name"}
 
 
 def _peers_from_env() -> list[dict]:
@@ -197,6 +198,8 @@ def _peers_from_env() -> list[dict]:
         if not raw.get("url"):
             continue
         d: dict = {"index": n, "name": raw.get("name") or f"Peer {n}", "url": raw["url"].strip(), "token": raw.get("token") or ""}
+        if raw.get("display_name"):
+            d["display_name"] = raw["display_name"].strip()
         for k in ("interval_minutes", "failure_threshold", "timeout"):
             if raw.get(k):
                 try:

@@ -84,7 +84,7 @@ Everything that matters for a reinstall lives in `.env`, so disaster recovery is
 | `DOCKBARE_REMOTE_1_HOST`, `_TYPE`, `_PORT`, `_USER`, `_PASSWORD`, `_PATH`, `_TLS`, `_PASSIVE`, `_NAT_FIX`, `_VERIFY_TLS`, `_PRIVATE_KEY[_FILE]`, `_KEY_PASSPHRASE`, `_HOST_KEY`, `_INSTANCE_DIR`, `_ENABLED` | Remotes 1–9. Shown as locked in the UI. |
 | `DOCKBARE_SMTP_*`, `DOCKBARE_NTFY_*`, `DOCKBARE_WEBHOOK_*` | Notification channels (also configurable in the UI; `.env` wins). |
 | `DOCKBARE_PEER_TOKEN` | Token other instances use to read this one's status. Generated if missing. |
-| `DOCKBARE_PEER_1_URL`, `_TOKEN`, `_NAME`, `_INTERVAL`, `_THRESHOLD`, `_ALERT_ON_PROBLEMS`, `_VERIFY_TLS`, `_ENABLED` | Peers 1–9 to watch. Shown as locked in the UI. |
+| `DOCKBARE_PEER_1_URL`, `_TOKEN`, `_NAME`, `_DISPLAY_NAME`, `_INTERVAL`, `_THRESHOLD`, `_ALERT_ON_PROBLEMS`, `_VERIFY_TLS`, `_ENABLED` | Peers 1–9 to watch. Shown as locked in the UI. `_DISPLAY_NAME` is the heading of that peer's group on the public status page. |
 | `DOCKBARE_BEHIND_PROXY`, `DOCKBARE_SECURE_COOKIES` | `true` behind a reverse proxy; cookie flag `auto`/`true`/`false`. |
 | `DOCKBARE_SESSION_*`, `DOCKBARE_LOGIN_*` | Session lifetime and login throttling. |
 | `DOCKBARE_HELPER_IMAGE` | Image for the helper containers (default: the Dockbare image itself). |
@@ -134,9 +134,22 @@ whether to restart it automatically (with a budget, e.g. 3 per 30 min, after whi
 and tells you), and whether it appears on the public page. Enable the page under Uptime → Settings;
 it is served at `/` (and `/uptime`), needs no login, shows only the containers you marked public (with
 display names) with a 90-day availability graph per service, plus your peers and *their* public services, so
-pinned instances give one global view. You can also declare incidents yourself (investigating →
+pinned instances give one global view. A peer's group is headed by the "Name on the status page" you give it
+under Peers → Edit, else by the name the peer reports for itself (its own "Name of this site" setting or its
+instance name), else by the peer's name. You can also declare incidents yourself (investigating →
 identified → monitoring → resolved, minor or major) and schedule maintenance windows; both appear on
 the page, and during a maintenance window the affected containers neither alert nor count as downtime.
+
+Beyond containers: **external checks** (Uptime → External checks) ping any `https://…` URL (up while it answers
+below HTTP 400) or `tcp://host:port` (up while the port accepts connections), e.g. a domain, an API or a managed
+database, with their own interval, timeout and grace period; they notify like containers and can be shown on the
+public page. **Services** group several containers and/or checks into one entry on the page (say `Shop` = app +
+database + payment API); either any member being down marks the service as down, or it shows a partial outage
+until all members are down. Containers, checks and services can carry an icon (image URL or emoji), a website link
+and a one-line description for the page. With the page enabled, `/badge.svg` is a live shields-style **status
+badge** ("all systems operational", "partial outage", "major outage", "maintenance") to embed anywhere, and
+`/badge.json` serves the same in the shields.io endpoint format; Uptime → Settings has copy-ready HTML and
+Markdown snippets that link the badge to the page.
 
 ## Command line
 

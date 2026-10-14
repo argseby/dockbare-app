@@ -29,7 +29,7 @@ FORMAT = "dockbare-config"
 TRIGGER_KINDS = {
     "schedule.saved", "schedule.deleted", "schedule.toggled", "remote.created", "remote.updated", "remote.deleted",
     "settings.saved", "settings.instance_renamed", "peer.created", "peer.updated", "peer.deleted", "peer.token_regenerated",
-    "uptime.monitor_saved",
+    "uptime.monitor_saved", "uptime.check_saved", "uptime.check_deleted", "uptime.service_saved", "uptime.service_deleted",
 }
 
 
@@ -57,7 +57,7 @@ class ConfigSync:
                 if p["source"] == "env":
                     continue
                 full = m.peers.get(p["id"], with_token=include_secrets) or p
-                peers.append({k: full.get(k) for k in ("id", "name", "url", "token", "enabled", "interval_minutes", "failure_threshold", "alert_on_problems", "verify_tls", "timeout", "source")})
+                peers.append({k: full.get(k) for k in ("id", "name", "display_name", "url", "token", "enabled", "interval_minutes", "failure_threshold", "alert_on_problems", "verify_tls", "timeout", "source")})
         notifications = m._notify_settings_plain() if include_secrets else m.notify_settings_public()
         for section, keys in m.settings.notify_env.items():
             for k in keys:
@@ -73,6 +73,8 @@ class ConfigSync:
             "peers": peers,
             "peer_token": (m.peers.token() if (m.peers and include_secrets and m.peers.token_source() != "env") else None),
             "monitors": m.uptime.monitors() if m.uptime else {},
+            "checks": m.uptime.checks() if m.uptime else [],
+            "services": m.uptime.services() if m.uptime else [],
             "uptime": m.uptime.settings() if m.uptime else None,
             "totp": ({"secret": m.auth.totp_secret(), "recovery": m.db.get_setting("totp_recovery") or []}
                      if (include_secrets and getattr(m, "auth", None) and m.auth.totp_source == "ui") else None),
@@ -162,6 +164,16 @@ class ConfigSync:
                 except ManagerError:
                     pass
             summary["monitors"] = len(doc["monitors"])
+            for c in doc.get("checks") or []:
+                try:
+                    m.uptime.save_check(c, c.get("id"), create=True)
+                except ManagerError as e:
+                    log.warning("Skipped check %s: %s", c.get("name"), e)
+            for s in doc.get("services") or []:
+                try:
+                    m.uptime.save_service(s, s.get("id"), create=True)
+                except ManagerError as e:
+                    log.warning("Skipped service %s: %s", s.get("name"), e)
         if "uptime" in want and m.uptime and isinstance(doc.get("uptime"), dict):
             m.uptime.save_settings(doc["uptime"])
             summary["uptime"] = True
