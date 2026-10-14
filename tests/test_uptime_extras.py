@@ -68,6 +68,8 @@ def test_public_fields_and_badge(uptime_app, monkeypatch):
     item = pl["groups"][0]["items"][0]
     assert item["name"] == "Website" and item["url"] == "https://example.com" and item["icon"] == "🌐" and item["description"] == "Main site"
     assert set(item["uptime"]) == {"d1", "d7", "d30", "d365"} and pl["app"]["url"].startswith("https://github.com/")
+    assert len(item["history"]) == 365 and len(item["history_24h"]) == 24 and item["history_24h"][-1]["hours"] == 1
+    assert item["history_24h"][-1]["pct"] == 100.0 and item["history_24h"][0]["pct"] is None  # monitoring began just now
     r = anon.get("/badge.svg")
     assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"All systems operational" in r.data and b"#111a2e" in r.data
     assert b"#ffffff" in anon.get("/badge.svg?theme=light").data and b"Homelab" in anon.get("/badge.svg?label=Homelab").data
@@ -343,6 +345,7 @@ def test_history_before_monitoring_can_be_assumed_up(uptime_app, monkeypatch):
     c.put("/api/uptime/settings", json={"history_assume_up": True})
     hist = core.uptime.daily_history("web", 90)
     assert all(day["pct"] == 100.0 for day in hist)
+    assert all(h["pct"] == 100.0 for h in core.uptime.hourly_history("web"))
     assert core.uptime.daily_history("never-seen", 7)[0]["pct"] == 100.0
     c.put("/api/uptime/settings", json={"history_assume_up": False})
     assert core.uptime.daily_history("web", 90)[0]["pct"] is None

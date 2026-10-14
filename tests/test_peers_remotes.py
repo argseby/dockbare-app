@@ -384,7 +384,7 @@ def test_uptime_public_page(uptime_app, monkeypatch):
     pl = r.get_json()
     assert pl["title"] == "My services" and pl["overall"] == "operational"
     it = pl["groups"][0]["items"]
-    assert len(it) == 1 and it[0]["name"] == "Website" and it[0]["status"] == "up" and it[0]["since"] is None and len(it[0]["history"]) == 90
+    assert len(it) == 1 and it[0]["name"] == "Website" and it[0]["status"] == "up" and it[0]["since"] is None and len(it[0]["history"]) == 365
     assert "db" not in str(pl)  # non-public containers never appear
     assert anon.get("/").status_code == 200 and b"uptime.js" in anon.get("/").data
     d.containers["web"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1, "health": None})
@@ -513,7 +513,7 @@ def test_uptime_daily_history(uptime_app, monkeypatch):
     assert h[-1]["pct"] == 100.0
     pub = c.put("/api/uptime/settings", json={"public_enabled": True}) and c.put("/api/uptime/monitors/web", json={"public": True})
     pl = app.test_client().get("/api/uptime/public").get_json()
-    assert pl["history_days"] == 90 and len(pl["groups"][0]["items"][0]["history"]) == 90
+    assert pl["history_days"] == 365 and len(pl["groups"][0]["items"][0]["history"]) == 365 and len(pl["groups"][0]["items"][0]["history_24h"]) == 24
     assert len(c.get("/api/uptime").get_json()["containers"][0]["history"]) == 30
 
 

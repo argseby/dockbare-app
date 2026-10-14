@@ -133,9 +133,9 @@ running, unhealthy, exited with an error, OOM-killed, stuck restarting, or gone.
 whether to restart it automatically (with a budget, e.g. 3 per 30 min, after which Dockbare gives up
 and tells you), and whether it appears on the public page. Enable the page under Uptime → Settings;
 it is served at `/` (and `/uptime`), needs no login, shows only the containers you marked public (with
-display names) with a 90-day availability graph per service (days before monitoring began show as "no data"
-unless you switch on "Treat days before monitoring began as up") and a switchable availability figure (24 h, 7 d,
-30 d or 1 year), plus your peers and *their* public services, so
+display names) with an availability graph and figure per service over a switchable window (hourly bars for the
+last 24 h, daily bars for 7, 30 or 365 days; days before monitoring began show as "no data" unless you switch on
+"Treat days before monitoring began as up"), plus your peers and *their* public services, so
 pinned instances give one global view. A peer's group is headed by the "Name on the status page" you give it
 under Peers → Edit, else by the name the peer reports for itself (its own "Name of this site" setting or its
 instance name), else by the peer's name. You can also declare incidents yourself (investigating →

@@ -94,7 +94,8 @@ SETTINGS_DEFAULTS = {
 }
 WINDOWS = {"d1": 86400, "d7": 7 * 86400, "d30": 30 * 86400, "d365": 365 * 86400}
 REPO_URL = "https://github.com/argseby/dockbare-app"
-HISTORY_DAYS_PUBLIC = 90
+HISTORY_DAYS_PUBLIC = 365  # daily bars on the status page (the page shows the selected window of it)
+HISTORY_HOURS_PUBLIC = 24  # hourly bars for the 24 h window
 HISTORY_DAYS_INTERNAL = 30
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 ANN_TYPES = ("incident", "maintenance")
@@ -601,19 +602,20 @@ class Uptime:
             out[key] = round(100.0 * (1 - down / win), 3)
         return out
 
-    def _history_from(self, spans: list, first: float | None, days: int, now: float) -> list[dict]:
-        """Per UTC day: availability percentage (None before monitoring began, unless the history is
-        assumed up) and down seconds."""
-        today = int(now // 86400) * 86400
-        start = today - (days - 1) * 86400
+    def _buckets(self, spans: list, first: float | None, start: float, size: int, count: int, now: float) -> list[dict]:
+        """Availability per bucket of ``size`` seconds from ``start``: percentage (None before monitoring
+        began, unless the history is assumed up), down seconds and the kinds of failure seen."""
         if self.settings().get("history_assume_up"):
             first = start if first is None else min(first, start)
         out = []
-        for i in range(days):
-            a = start + i * 86400
-            b = min(a + 86400, now)
+        for i in range(count):
+            a = start + i * size
+            b = min(a + size, now)
+            entry: dict[str, Any] = {"day": a, "pct": None, "down": 0, "kinds": []}
+            if size != 86400:
+                entry["hours"] = size // 3600
             if b <= a or first is None or b <= first:
-                out.append({"day": a, "pct": None, "down": 0, "kinds": []})
+                out.append(entry)
                 continue
             a_eff = max(a, first)
             span = b - a_eff
@@ -624,8 +626,19 @@ class Uptime:
                 if y > x:
                     down += y - x
                     kinds.extend(k for k in sorted(s_kinds) if k not in kinds)
-            out.append({"day": a, "pct": round(100.0 * (1 - down / span), 3) if span > 0 else None, "down": int(down), "kinds": kinds})
+            entry.update({"pct": round(100.0 * (1 - down / span), 3) if span > 0 else None, "down": int(down), "kinds": kinds})
+            out.append(entry)
         return out
+
+    def _history_from(self, spans: list, first: float | None, days: int, now: float) -> list[dict]:
+        """Per UTC day, ending today."""
+        start = int(now // 86400) * 86400 - (days - 1) * 86400
+        return self._buckets(spans, first, start, 86400, days, now)
+
+    def _hourly_from(self, spans: list, first: float | None, hours: int, now: float) -> list[dict]:
+        """Per hour, ending with the current (partial) hour."""
+        start = int(now // 3600) * 3600 - (hours - 1) * 3600
+        return self._buckets(spans, first, start, 3600, hours, now)
 
     def _first_seen(self, keys: list[str]) -> dict[str, float]:
         if not keys:
@@ -642,6 +655,12 @@ class Uptime:
         start = int(now // 86400) * 86400 - (days - 1) * 86400
         spans = self._incident_spans([container], start, now)[container]
         return self._history_from(spans, self._first_seen([container]).get(container), days, now)
+
+    def hourly_history(self, container: str, hours: int = HISTORY_HOURS_PUBLIC, now: float | None = None) -> list[dict]:
+        now = now or time.time()
+        start = int(now // 3600) * 3600 - (hours - 1) * 3600
+        spans = self._incident_spans([container], start, now)[container]
+        return self._hourly_from(spans, self._first_seen([container]).get(container), hours, now)
 
     def rows(self) -> list[dict]:
         if time.time() - self.last_poll > 60:
@@ -720,6 +739,7 @@ class Uptime:
         return {"id": s["id"], "name": s["name"], "service": True, "status": status,
                 "since": first_inc["started_at"] if first_inc else None, "kind": first_inc["kind"] if first_inc else None,
                 "uptime": self._pct_from(spans, now), "history": self._history_from(spans, min(seen.values()) if seen else None, HISTORY_DAYS_PUBLIC, now),
+                "history_24h": self._hourly_from(spans, min(seen.values()) if seen else None, HISTORY_HOURS_PUBLIC, now),
                 "components": [{"name": m["name"], "status": ("down" if m["incident"] else "up") if m["known"] else "unknown", "kind": m["incident"]["kind"] if m["incident"] else None} for m in members],
                 **self._public_extras(s)}
 
@@ -737,7 +757,8 @@ class Uptime:
             inc = c.get("incident")
             items.append({"name": cfg.get("display_name") or name, "status": "down" if inc else "up", "since": inc["started_at"] if inc else None,
                           "kind": inc["kind"] if inc else None, "uptime": self.uptime_pct(name, now),
-                          "history": self.daily_history(name, HISTORY_DAYS_PUBLIC, now), **self._public_extras(cfg)})
+                          "history": self.daily_history(name, HISTORY_DAYS_PUBLIC, now), "history_24h": self.hourly_history(name, HISTORY_HOURS_PUBLIC, now),
+                          **self._public_extras(cfg)})
         for cid, chk in checks.items():
             key = CHECK_PREFIX + cid
             if not chk["public"] or not chk["enabled"] or key in in_service:
@@ -745,7 +766,8 @@ class Uptime:
             inc = (self.check_state.get(cid) or {}).get("incident")
             items.append({"name": chk["name"], "check": True, "status": "down" if inc else "up", "since": inc["started_at"] if inc else None,
                           "kind": inc["kind"] if inc else None, "uptime": self.uptime_pct(key, now),
-                          "history": self.daily_history(key, HISTORY_DAYS_PUBLIC, now), **self._public_extras(chk)})
+                          "history": self.daily_history(key, HISTORY_DAYS_PUBLIC, now), "history_24h": self.hourly_history(key, HISTORY_HOURS_PUBLIC, now),
+                          **self._public_extras(chk)})
         for s in services:
             items.append(self._service_item(s, checks, now))
         items.sort(key=lambda i: i["name"].lower())
@@ -813,7 +835,7 @@ class Uptime:
             merged_anns = [{**a, "site": None if g["self"] else g["name"]} for g in groups for a in g["announcements"]]
             groups = [{**groups[0], "items": sorted(merged_items, key=lambda i: i["name"].lower()), "announcements": merged_anns, "merged": True}]
         return {"title": s.get("public_title") or "Service status", "updated": time.time(), "overall": overall, "groups": groups, "incidents": incidents,
-                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "unreachable": unreachable, "windows": WINDOWS,
+                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "history_hours": HISTORY_HOURS_PUBLIC, "unreachable": unreachable, "windows": WINDOWS,
                 "app": {"name": "Dockbare", "url": REPO_URL}}
 
     def badge(self, label: str = "") -> dict:

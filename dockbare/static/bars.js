@@ -1,6 +1,8 @@
 // Daily availability strip: one bar per day, status-coloured, with a per-bar tooltip.
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const dayLabel = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const hourLabel = (ts) => new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const label = (h) => (h.hours ? hourLabel(h.day) : dayLabel(h.day));
 const downLabel = (s) => (s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 
 export function cls(pct) {
@@ -14,10 +16,11 @@ export function historyBars(history, { height = 24 } = {}) {
   const n = history.length || 1;
   const bw = 6, gap = 2, w = n * (bw + gap) - gap;
   const rects = history.map((h, i) => {
-    const title = h.pct == null ? `${dayLabel(h.day)}\nNo data` : `${dayLabel(h.day)}\n${h.pct >= 99.995 ? "100" : h.pct.toFixed(2)}% available${h.down ? `\n${downLabel(h.down)} downtime` : ""}${h.kinds && h.kinds.length ? ` (${h.kinds.join(", ")})` : ""}`;
+    const title = h.pct == null ? `${label(h)}\nNo data` : `${label(h)}\n${h.pct >= 99.995 ? "100" : h.pct.toFixed(2)}% available${h.down ? `\n${downLabel(h.down)} downtime` : ""}${h.kinds && h.kinds.length ? ` (${h.kinds.join(", ")})` : ""}`;
     return `<rect class="ub ub-${cls(h.pct)}" x="${i * (bw + gap)}" y="0" width="${bw}" height="${height}" rx="1.5" data-tip="${esc(title)}" aria-label="${esc(title.replace(/\n/g, ", "))}"></rect>`;
   }).join("");
-  return `<svg class="ubars" viewBox="0 0 ${w} ${height}" preserveAspectRatio="none" role="img" aria-label="Daily availability, last ${n} days">${rects}</svg>`;
+  const unit = history[0] && history[0].hours ? "hours" : "days";
+  return `<svg class="ubars" viewBox="0 0 ${w} ${height}" preserveAspectRatio="none" role="img" aria-label="Availability, last ${n} ${unit}">${rects}</svg>`;
 }
 
 let tipEl = null;
@@ -43,9 +46,9 @@ export function combine(histories) {
   const out = [];
   for (let i = 0; i < n; i++) {
     const vals = histories.map((h) => h[h.length - n + i]).filter((x) => x && x.pct != null);
-    if (!vals.length) { const any = histories.find((h) => h[h.length - n + i]); out.push({ day: any ? any[any.length - n + i].day : 0, pct: null, down: 0, kinds: [] }); continue; }
+    if (!vals.length) { const any = histories.find((h) => h[h.length - n + i]); const e = any ? any[any.length - n + i] : {}; out.push({ day: e.day || 0, hours: e.hours, pct: null, down: 0, kinds: [] }); continue; }
     const worst = vals.reduce((a, b) => (b.pct < a.pct ? b : a));
-    out.push({ day: worst.day, pct: worst.pct, down: Math.max(...vals.map((v) => v.down || 0)), kinds: [...new Set(vals.flatMap((v) => v.kinds || []))] });
+    out.push({ day: worst.day, hours: worst.hours, pct: worst.pct, down: Math.max(...vals.map((v) => v.down || 0)), kinds: [...new Set(vals.flatMap((v) => v.kinds || []))] });
   }
   return out;
 }
@@ -60,6 +63,6 @@ export function avgPct(items, key = "d30") {
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
-export function axis(days) {
-  return `<div class="ub-axis"><span>−${days} d</span><span>today</span></div>`;
+export function axis(count, unit = "d") {
+  return `<div class="ub-axis"><span>−${count} ${unit}</span><span>${unit === "h" ? "now" : "today"}</span></div>`;
 }
