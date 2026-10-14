@@ -25,7 +25,7 @@ from .tasks import TaskManager
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; font-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
 
 
