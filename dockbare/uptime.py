@@ -58,6 +58,7 @@ CHECK_DEFAULTS = {
 # Services: several containers and/or checks shown as one entry on the public page.
 SERVICE_DEFAULTS = {
     "members": [],
+    "member_names": {},  # member key -> name shown on the status page
     "down_if_any": True,  # False: "degraded" while some members are down, "down" only when all are
     "public_icon": "",
     "public_url": "",
@@ -83,6 +84,7 @@ SETTINGS_DEFAULTS = {
     "public_title": "Service status",
     "public_group_name": "",
     "public_show_peers": True,
+    "public_merge_peers": False,  # one flat list instead of one section per site
     "incident_keep_days": 365,
 }
 WINDOWS = {"d1": 86400, "d7": 7 * 86400, "d30": 30 * 86400}
@@ -144,7 +146,7 @@ class Uptime:
                          "mode": "ignore" if w.get("mode") == "ignore" else "mute", "label": str(w.get("label") or "")[:60]})
         s["quiet_windows"] = wins
         s["public_group_name"] = str(s.get("public_group_name") or "").strip()[:80]
-        for b in ("monitor_new", "public_enabled", "public_show_peers"):
+        for b in ("monitor_new", "public_enabled", "public_show_peers", "public_merge_peers"):
             s[b] = bool(s.get(b))
         self.m.db.set_setting("uptime", s)
         self.m.event("info", "settings.saved", "Uptime settings saved")
@@ -678,21 +680,22 @@ class Uptime:
     def _public_extras(cfg: dict) -> dict:
         return {"icon": cfg.get("public_icon") or None, "url": cfg.get("public_url") or None, "description": cfg.get("public_description") or None}
 
-    def _member_state(self, key: str, checks: dict[str, dict]) -> dict:
+    def _member_state(self, key: str, checks: dict[str, dict], names: dict[str, str] | None = None) -> dict:
         """Current state of a service member: a container name or 'check:<id>'."""
+        label = (names or {}).get(key)
         if key.startswith(CHECK_PREFIX):
             chk = checks.get(key[len(CHECK_PREFIX):])
             st = self.check_state.get(key[len(CHECK_PREFIX):]) if chk and chk["enabled"] else None
-            name = chk["name"] if chk else key
+            name = label or (chk["name"] if chk else key)
             inc = st.get("incident") if st else None
             return {"key": key, "name": name, "known": st is not None, "incident": inc, "check": True}
         c = self.snapshot.get(key)
         cfg = (c or {}).get("monitor") or {}
         inc = c.get("incident") if c else None
-        return {"key": key, "name": cfg.get("display_name") or key, "known": bool(c and c.get("monitored")), "incident": inc, "check": False}
+        return {"key": key, "name": label or cfg.get("display_name") or key, "known": bool(c and c.get("monitored")), "incident": inc, "check": False}
 
     def _service_item(self, s: dict, checks: dict[str, dict], now: float) -> dict:
-        members = [self._member_state(k, checks) for k in s["members"]]
+        members = [self._member_state(k, checks, s.get("member_names")) for k in s["members"]]
         known = [m for m in members if m["known"]]
         down = [m for m in known if m["incident"]]
         if not down:
@@ -755,7 +758,7 @@ class Uptime:
                 out[CHECK_PREFIX + cid] = chk["name"]
         for s in services:
             for m in s["members"]:
-                out[m] = f"{s['name']} · {self._member_state(m, checks)['name']}"
+                out[m] = f"{s['name']} · {self._member_state(m, checks, s.get('member_names'))['name']}"
         return out
 
     def public_payload(self) -> dict:
@@ -771,8 +774,9 @@ class Uptime:
                 st = p.get("status") or {}
                 remote = st.get("remote") or {}
                 up_info = remote.get("uptime") or {}
-                groups.append({"name": p.get("display_name") or up_info.get("public_group_name") or p["name"], "self": False, "online": not (p["alert_active"] or st.get("ok") is False),
-                               "checked_at": st.get("checked_at"), "items": up_info.get("public_items") or [], "announcements": up_info.get("announcements") or []})
+                online = not (p["alert_active"] or st.get("ok") is False)
+                groups.append({"name": p.get("display_name") or up_info.get("public_group_name") or p["name"], "self": False, "online": online, "checked_at": st.get("checked_at"),
+                               "items": (up_info.get("public_items") or []) if online else [], "announcements": (up_info.get("announcements") or []) if online else []})
         all_items = [i for g in groups for i in g["items"]]
         down = [i for i in all_items if i["status"] == "down"] + [g for g in groups if not g["online"]]
         degraded = [i for i in all_items if i["status"] == "degraded"]
@@ -793,8 +797,14 @@ class Uptime:
         incidents = [{"name": display[i["container"]], "kind": i["kind"], "started_at": i["started_at"], "ended_at": i["ended_at"], "duration": i["duration"]}
                      for i in self.incidents(since=since, limit=400) if i["container"] in display]
         history_anns = [a for a in anns if not (a["active"] or a["upcoming"])]
+        unreachable = [g["name"] for g in groups if not g["online"]]
+        if s.get("public_merge_peers") and len(groups) > 1:
+            # one flat section: peers' items and announcements are tagged with their site instead
+            merged_items = [i for g in groups for i in ({**i, "site": None if g["self"] else g["name"]} for i in g["items"])]
+            merged_anns = [{**a, "site": None if g["self"] else g["name"]} for g in groups for a in g["announcements"]]
+            groups = [{**groups[0], "items": sorted(merged_items, key=lambda i: i["name"].lower()), "announcements": merged_anns, "merged": True}]
         return {"title": s.get("public_title") or "Service status", "updated": time.time(), "overall": overall, "groups": groups, "incidents": incidents,
-                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC}
+                "announcements": history_anns, "history_days": HISTORY_DAYS_PUBLIC, "unreachable": unreachable}
 
     def badge(self, label: str = "") -> dict:
         """Overall status in the shields.io endpoint format (plus the raw overall state)."""
@@ -984,6 +994,7 @@ class Uptime:
             except json.JSONDecodeError:
                 pass
             cfg["members"] = [str(m) for m in (cfg.get("members") or [])]
+            cfg["member_names"] = {str(k): str(v) for k, v in (cfg.get("member_names") or {}).items() if isinstance(cfg.get("member_names"), dict)}
             cfg.update({"id": row["id"], "name": row["name"], "updated_at": row["updated_at"]})
             out.append(cfg)
         return out
@@ -1015,10 +1026,15 @@ class Uptime:
                     if m not in members:
                         members.append(m)
                 cfg[k] = members[:50]
+            elif k == "member_names":
+                if not isinstance(v, dict):
+                    raise ManagerError("member_names must be an object.")
+                cfg[k] = {str(key): str(val or "").strip()[:80] for key, val in v.items() if str(val or "").strip()}
             elif isinstance(default, bool):
                 cfg[k] = bool(v)
             else:
                 cfg[k] = str(v or "").strip()[:STR_LIMITS.get(k, 80)]
+        cfg["member_names"] = {k: v for k, v in cfg["member_names"].items() if k in cfg["members"]}
         if not cfg["members"] and not prune:
             raise ManagerError("A service needs at least one container or check.")
         self._check_public_fields(cfg)

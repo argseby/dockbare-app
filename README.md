@@ -145,8 +145,9 @@ below HTTP 400) or `tcp://host:port` (up while the port accepts connections), e.
 database, with their own interval, timeout and grace period; they notify like containers and can be shown on the
 public page. **Services** group several containers and/or checks into one entry on the page (say `Shop` = app +
 database + payment API); either any member being down marks the service as down, or it shows a partial outage
-until all members are down. Containers, checks and services can carry an icon (image URL or emoji), a website link
-and a one-line description for the page. With the page enabled, `/badge.svg` is a live shields-style **status
+until all members are down, and each member can be renamed for the page. Containers, checks and services can carry
+an icon (image URL or emoji), a website link and a one-line description for the page. Peers' services get their own
+section per site, or one flat list with a small site tag when "Show peers' services in the same list" is on. With the page enabled, `/badge.svg` is a live shields-style **status
 badge** ("all systems operational", "partial outage", "major outage", "maintenance") to embed anywhere, and
 `/badge.json` serves the same in the shields.io endpoint format; Uptime → Settings has copy-ready HTML and
 Markdown snippets that link the badge to the page.

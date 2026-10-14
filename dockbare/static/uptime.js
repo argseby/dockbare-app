@@ -47,8 +47,9 @@ function service(i) {
   try { host = new URL(i.url).host; } catch (e) { /* show as is */ }
   const meta = i.description || i.url ? `<div class="svc-meta">${i.description ? `<span>${esc(i.description)}</span>` : ""}${i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${icon("globe", "sm")} ${esc(host)}</a>` : ""}</div>` : "";
   const parts = i.components && i.components.length ? `<div class="svc-parts">${i.components.map((c) => `<span class="part" title="${esc(c.status === "down" ? (KIND_LABEL[c.kind] || c.kind || "down") : c.status === "up" ? "operational" : "no data")}"><span class="dot ${c.status === "down" ? "bad" : c.status === "up" ? "ok" : "off"}"></span>${esc(c.name)}</span>`).join("")}</div>` : "";
-  return `<div class="st-svc ${down ? "is-down" : ""} ${degraded ? "is-degraded" : ""}">
-    <div class="row"><span class="dot ${down ? "bad" : degraded ? "warn" : "ok"}"></span>${ic}<b class="name">${esc(i.name)}</b>${badge}
+  const site = i.site ? `<span class="badge outline site" title="hosted on ${esc(i.site)}">${icon("globe", "sm")} ${esc(i.site)}</span>` : "";
+  return `<div class="st-svc ${down ? "is-down" : ""} ${degraded ? "is-degraded" : ""} ${ic ? "has-icon" : ""}">
+    <div class="row"><span class="dot ${down ? "bad" : degraded ? "warn" : "ok"}"></span>${ic}<b class="name">${esc(i.name)}</b>${badge}${site}
       <span class="stats" title="availability over the last 24 hours, 7 days and 30 days"><span><em>24h</em>${pct(i.uptime.d1)}</span><span><em>7d</em>${pct(i.uptime.d7)}</span><span><em>30d</em>${pct(i.uptime.d30)}</span></span></div>
     ${meta}
     ${down || degraded ? `<div class="since">${icon("clock", "sm")} since ${esc(fmt(i.since))}</div>` : ""}
@@ -64,18 +65,18 @@ async function load() {
   document.title = d.title; $("#title").textContent = d.title;
   const items = d.groups.flatMap((g) => g.items.map((i) => ({ ...i, group: g.name })));
   const downItems = items.filter((i) => i.status === "down"), degradedItems = items.filter((i) => i.status === "degraded");
-  const offline = d.groups.filter((g) => !g.online);
-  const active = d.groups.flatMap((g) => (g.announcements || []).filter((a) => a.active || a.upcoming).map((a) => ({ ...a, group: g.self ? null : g.name })));
+  const offline = d.unreachable || d.groups.filter((g) => !g.online).map((g) => g.name);
+  const active = d.groups.flatMap((g) => (g.announcements || []).filter((a) => a.active || a.upcoming).map((a) => ({ ...a, group: g.self ? (a.site || null) : g.name })));
   const activeInc = active.filter((a) => a.type === "incident" && a.active);
   const inMaint = active.filter((a) => a.type === "maintenance" && a.active);
   const [ic, text] = HERO[d.overall] || ["help", d.overall];
   const subBits = [];
   if (downItems.length) subBits.push(`${downItems.length} of ${items.length} service(s) down`);
   if (degradedItems.length) subBits.push(`${degradedItems.length} partially degraded`);
-  if (offline.length) subBits.push(`${offline.map((g) => g.name).join(", ")} unreachable`);
+  if (offline.length) subBits.push(`${offline.join(", ")} unreachable`);
   activeInc.forEach((a) => subBits.push(`${a.title} — ${(STATUS_LABEL[a.status] || a.status).toLowerCase()}${a.updates && a.updates[0] ? `, last update ${ago(a.updates[0].ts)}` : ""}`));
   if (inMaint.length) subBits.push(`maintenance: ${inMaint.map((a) => a.title).join(", ")}`);
-  if (!subBits.length) subBits.push(`${items.length} service(s) across ${d.groups.length} location(s) · 30-day availability ${pct(avgPct(items))}`);
+  if (!subBits.length) subBits.push(`${items.length} service(s)${d.groups.length > 1 ? ` across ${d.groups.length} locations` : ""} · 30-day availability ${pct(avgPct(items))}`);
   const chips = [["check", items.length - downItems.length - degradedItems.length, "operational"], ["x", downItems.length, "down"], ["alert", degradedItems.length, "degraded"], ["alert", activeInc.length, activeInc.length === 1 ? "incident" : "incidents"], ["wrench", inMaint.length + active.filter((a) => a.upcoming).length, "maintenance"]]
     .filter(([, n], i) => n || i === 0).map(([ic2, n, l]) => `<span class="chip" title="${l}">${icon(ic2, "sm")} ${n}<span class="lbl"> ${l}</span></span>`).join("");
   $("#hero").className = `st-status st-status--${d.overall}`;

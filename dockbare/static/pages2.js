@@ -517,17 +517,17 @@ function checkDialog(existing, defaults) {
 
 function serviceDialog(existing, candidates, defaults) {
   const s = existing || { ...defaults, name: "" };
-  const members = new Set(s.members || []);
+  const members = new Set(s.members || []), labels = s.member_names || {};
   const body = `
     <div class="form-group"><label class="field">Name</label><input type="text" name="name" value="${esc(s.name || "")}" placeholder="Shop"></div>
-    <div class="form-group mt"><label class="field">Members</label><div class="member-pick">${candidates.length ? candidates.map((c) => `<label class="check"><input type="checkbox" name="members" data-multi="1" value="${esc(c.key)}" ${members.has(c.key) ? "checked" : ""}> ${icon(c.check ? "globe" : "container", "sm")} ${esc(c.name)}</label>`).join("") : `<span class="muted small">No monitored containers or external checks yet.</span>`}</div><div class="help">Members are shown as part of the service on the public page, not on their own.</div></div>
+    <div class="form-group mt"><label class="field">Members</label><div class="member-pick">${candidates.length ? candidates.map((c) => `<div class="member"><label class="check"><input type="checkbox" data-member="${esc(c.key)}" ${members.has(c.key) ? "checked" : ""}> ${icon(c.check ? "globe" : "container", "sm")} ${esc(c.name)}</label><input type="text" class="member-label" data-label="${esc(c.key)}" value="${esc(labels[c.key] || "")}" placeholder="${esc(c.label)}" title="Name shown for this member on the status page"></div>`).join("") : `<span class="muted small">No monitored containers or external checks yet.</span>`}</div><div class="help">Members are shown as part of the service on the public page, not on their own. The text field next to a selected member renames it there.</div></div>
     <div class="stack gap-2 mt">${switchHtml("down_if_any", s.down_if_any, "Mark the whole service as down when any member is down")}</div>
     <div class="help">Off: the service shows a partial outage while some members are down and counts as down only when all of them are.</div>
     ${publicFieldsHtml(s)}`;
   return new Promise((resolve) => {
     const d = modal({ title: existing ? `Service: ${existing.name}` : "Add service", body, size: "wide", footer: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-action="save">${icon("check")} Save</button>`, onClose: () => resolve(false) });
     bind(d.el, {
-      save: async (b) => { await busy(b, async () => { const v = formValues(d.el); v.members ||= []; existing ? await api.put(`/api/uptime/services/${existing.id}`, v) : await api.post("/api/uptime/services", v); toast("Service saved", "success"); resolve(true); d.close(); }).catch((e) => toast(e.message, "error")); },
+      save: async (b) => { await busy(b, async () => { const v = formValues(d.el); v.members = $$("[data-member]:checked", d.el).map((i) => i.dataset.member); v.member_names = Object.fromEntries($$("[data-label]", d.el).filter((i) => i.value.trim()).map((i) => [i.dataset.label, i.value.trim()])); existing ? await api.put(`/api/uptime/services/${existing.id}`, v) : await api.post("/api/uptime/services", v); toast("Service saved", "success"); resolve(true); d.close(); }).catch((e) => toast(e.message, "error")); },
     });
   });
 }
@@ -598,7 +598,7 @@ export const uptime = {
         <div class="card"><div class="card-h"><h2>Settings</h2></div><div class="card-c">
           <div class="form-row"><div><label class="field">Check interval (seconds)</label><input type="number" name="poll_seconds" min="5" max="600" value="${s.poll_seconds}"></div><div><label class="field">Keep incidents (days)</label><input type="number" name="incident_keep_days" min="7" value="${s.incident_keep_days}"></div></div>
           <div class="form-row mt"><div><label class="field">Default grace period (s)</label><input type="number" name="default_grace_seconds" min="0" max="3600" value="${s.default_grace_seconds}"><div class="help">How long a container may be down before it counts as an outage (per-container settings override).</div></div></div>
-          <div class="stack gap-2 mt">${switchHtml("monitor_new", s.monitor_new, "Monitor every container by default (defaults: notify, no auto-restart)")}${switchHtml("notify_down", s.notify_down, "Notify when a container goes down")}${switchHtml("notify_recovery", s.notify_recovery, "Notify when it recovers")}${switchHtml("notify_restart", s.notify_restart, "Notify about automatic restarts")}${switchHtml("public_enabled", s.public_enabled, "Enable the public status page at / (no login); the app stays under /admin")}${switchHtml("public_show_peers", s.public_show_peers, "Include peers and their public services on it")}</div>
+          <div class="stack gap-2 mt">${switchHtml("monitor_new", s.monitor_new, "Monitor every container by default (defaults: notify, no auto-restart)")}${switchHtml("notify_down", s.notify_down, "Notify when a container goes down")}${switchHtml("notify_recovery", s.notify_recovery, "Notify when it recovers")}${switchHtml("notify_restart", s.notify_restart, "Notify about automatic restarts")}${switchHtml("public_enabled", s.public_enabled, "Enable the public status page at / (no login); the app stays under /admin")}${switchHtml("public_show_peers", s.public_show_peers, "Include peers and their public services on it")}${switchHtml("public_merge_peers", s.public_merge_peers, "Show peers' services in the same list as this site's (one section instead of one per site)")}</div>
           <div class="form-group mt"><label class="field">Quiet windows (planned downtime)</label>
             <div class="help mb">During a quiet window, <b>mute</b> records outages without notifying; <b>ignore</b> treats them as planned (no incident, no downtime), like a recurring maintenance window. Times in ${esc(settings.env.timezone)}.${sum.quiet ? ` <span class="badge info">${icon("moon", "sm")} active now: ${esc(sum.quiet.label)} (${esc(sum.quiet.mode)})</span>` : ""}</div>
             <div data-quiet>${(s.quiet_windows || []).map((w, i) => quietRow(w, i)).join("")}</div>
@@ -615,8 +615,8 @@ export const uptime = {
     $$(".ann-past", el).forEach((dt) => dt.addEventListener("toggle", () => (pastOpen = dt.open)));
     const defaults = { ...d.defaults, explicit: false };
     const names = rows.map((r) => r.name);
-    const candidates = [...rows.filter((r) => r.monitored && !r.self).map((r) => ({ key: r.name, name: r.monitor?.display_name ? `${r.name} · ${r.monitor.display_name}` : r.name, check: false })),
-      ...d.checks.map((c) => ({ key: `check:${c.id}`, name: c.name, check: true }))];
+    const candidates = [...rows.filter((r) => r.monitored && !r.self).map((r) => ({ key: r.name, name: r.monitor?.display_name ? `${r.name} · ${r.monitor.display_name}` : r.name, label: r.monitor?.display_name || r.name, check: false })),
+      ...d.checks.map((c) => ({ key: `check:${c.id}`, name: c.name, label: c.name, check: true }))];
     bind(el, {
       newInc: () => announcementDialog("incident", null, names).then((ch) => ch && this.render(el)),
       newMaint: () => announcementDialog("maintenance", null, names).then((ch) => ch && this.render(el)),

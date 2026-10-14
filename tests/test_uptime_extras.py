@@ -178,9 +178,45 @@ def test_services_group_members(uptime_app, monkeypatch):
     up.poll()
     shop = anon.get("/api/uptime/public").get_json()["groups"][0]["items"][0]
     assert shop["status"] == "down" and 99.9 < shop["uptime"]["d1"] < 100.0
+    # members can be renamed for the page; names of removed members are dropped
+    svc = c.put(f"/api/uptime/services/{svc['id']}", json={"member_names": {"db": "Database", key: "Payments", "nope": "x"}}).get_json()
+    assert svc["member_names"] == {"db": "Database", key: "Payments"}
+    pl = anon.get("/api/uptime/public").get_json()
+    assert [x["name"] for x in pl["groups"][0]["items"][0]["components"]] == ["Website", "Database", "Payments"]
+    assert {i["name"] for i in pl["incidents"]} >= {"Shop · Database", "Shop · Payments"}
     # deleting a check prunes it from the service; deleting the service leaves the members alone
     assert c.delete(f"/api/uptime/checks/{chk['id']}").status_code == 200
     assert c.get("/api/uptime").get_json()["services"][0]["members"] == ["web", "db"]
     assert c.delete(f"/api/uptime/services/{svc['id']}").status_code == 200
     items = anon.get("/api/uptime/public").get_json()["groups"][0]["items"]
     assert [i["name"] for i in items] == ["Website"]
+
+
+def test_public_page_merges_peers(uptime_app, monkeypatch):
+    from dockbare import peers as peers_mod
+
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    _quiet(core, monkeypatch)
+    anon = app.test_client()
+    c.put("/api/uptime/settings", json={"public_enabled": True, "public_group_name": "Home"})
+    c.put("/api/uptime/monitors/web", json={"public": True, "display_name": "Website"})
+    item = {"name": "Garage API", "status": "down", "since": 1.0, "kind": "unreachable", "uptime": {"d1": 90.0, "d7": 99.0, "d30": 99.9}, "history": []}
+    remote = {"app": "dockbare", "hostname": "b", "version": "3.0.0", "problems": [],
+              "uptime": {"public_group_name": "Garage", "public_items": [item], "announcements": [{"id": 1, "type": "maintenance", "title": "Fan swap", "status": "scheduled", "starts_at": 1.0, "ends_at": 2.0, "active": False, "upcoming": True, "updates": []}]}}
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: dict(remote))
+    p = c.post("/api/peers", json={"name": "Server B", "url": "https://b.example", "token": "t"}).get_json()
+    c.post(f"/api/peers/{p['id']}/check")
+    pl = anon.get("/api/uptime/public").get_json()
+    assert [g["name"] for g in pl["groups"]] == ["Home", "Garage"] and pl["unreachable"] == []
+    c.put("/api/uptime/settings", json={"public_merge_peers": True})
+    pl = anon.get("/api/uptime/public").get_json()
+    assert len(pl["groups"]) == 1 and pl["groups"][0]["merged"] and pl["groups"][0]["name"] == "Home"
+    assert [(i["name"], i.get("site")) for i in pl["groups"][0]["items"]] == [("Garage API", "Garage"), ("Website", None)]
+    assert pl["groups"][0]["announcements"][0]["site"] == "Garage" and pl["overall"] == "degraded"
+    # an unreachable peer is still reported
+    monkeypatch.setattr(peers_mod.Peers, "_fetch", lambda self, url, token, verify, timeout: (_ for _ in ()).throw(peers_mod.PeerError("down")))
+    for _ in range(3):
+        c.post(f"/api/peers/{p['id']}/check")
+    pl = anon.get("/api/uptime/public").get_json()
+    assert pl["unreachable"] == ["Garage"] and len(pl["groups"]) == 1

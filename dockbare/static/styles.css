@@ -620,3 +620,13 @@ html[data-theme="dark"] .st-status .chip { background: rgba(0,0,0,.25); border-c
 .st-svc.is-degraded .since { color: #b45309; }
 .item-icon { display: inline-block; width: 18px; height: 18px; border-radius: 4px; object-fit: cover; font-size: 14px; line-height: 18px; text-align: center; margin-right: 6px; flex: 0 0 auto; }
 .member-pick { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.st-svc.has-icon .svc-meta, .st-svc.has-icon .svc-parts { margin-left: 50px; }
+.st-svc .row .badge.site { margin-left: 0; font-weight: 500; }
+@media (max-width: 600px) {
+  .st-svc .svc-meta, .st-svc .svc-parts { margin-left: 18px; }
+  .st-svc.has-icon .svc-meta, .st-svc.has-icon .svc-parts { margin-left: 46px; }
+}
+.member-pick .member { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0; }
+.member-pick .member .check { flex: 1 1 auto; min-width: 0; }
+.member-pick .member-label { display: none; width: 150px; flex: 0 0 150px; }
+.member-pick .member:has(input:checked) .member-label { display: block; }

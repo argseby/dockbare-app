@@ -265,7 +265,8 @@ class Peers:
                     self.m.notifier.notify("peer", f"Peer down: {p['name']}", msg, "error")
                 elif consecutive == 1:
                     self.m.event("warning", "peer.check_failed", f"Peer '{p['name']}' check failed: {error}")
-            status = {"ok": ok, "checked_at": now, "error": error, "remote": st, "problems": list((st or {}).get("problems") or [])}
+            # keep the last known remote report while the peer is unreachable (names stay stable on the status page)
+            status = {"ok": ok, "checked_at": now, "error": error, "remote": st if ok else prev.get("remote"), "problems": list((st or {}).get("problems") or [])}
             self.m.db.execute(
                 "UPDATE peers SET last_checked_at=?, last_ok_at=COALESCE(?, last_ok_at), consecutive_failures=?, alert_active=?, status=? WHERE id=?",
                 (now, now if ok else None, consecutive, int(alert_active), json.dumps(status), peer_id))
