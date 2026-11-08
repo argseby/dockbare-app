@@ -11,7 +11,7 @@ import socket
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,10 @@ from .remotes import Remote, RemoteError, RemoteInfo, SECRET_FIELDS, REMOTE_TYPE
 from .tasks import Task, TaskManager
 
 log = logging.getLogger("dockbare.manager")
+
+HEALTH_RETRIES = 2            # extra attempts before a remote counts as unreachable
+HEALTH_RETRY_DELAY = 5.0      # seconds between attempts
+HEALTH_RECHECK_SECONDS = 120  # re-check a failed remote this soon instead of waiting a full interval
 
 GENERAL_DEFAULTS = {
     "compression_level": 6,
@@ -64,6 +68,7 @@ class Manager:
         self._locks_guard = threading.Lock()
         self._backup_slots = threading.BoundedSemaphore(max(1, int(self.general().get("max_parallel_backups", 2))))
         self.remote_health: dict[str, dict] = {}
+        self._remote_health_locks: dict[str, threading.Lock] = {}
         self._last_scan = 0.0
         self._scan_lock = threading.Lock()
         self._usage_cache: dict[str, tuple[float, int | None]] = {}
@@ -369,25 +374,49 @@ class Manager:
                 self.save_remote({"name": r["name"], "type": r["type"], "enabled": r["enabled"], "config": r["config"]}, remote_id, allow_env=True)
         return ok, msg
 
+    def _health_lock(self, remote_id: str) -> threading.Lock:
+        with self._locks_guard:
+            return self._remote_health_locks.setdefault(remote_id, threading.Lock())
+
+    def _probe_remote(self, remote_id: str) -> tuple[bool, str]:
+        try:
+            return self.test_remote(remote_id=remote_id)
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+
     def check_remote_health(self, remote_id: str) -> dict:
-        r = self.get_remote(remote_id)
-        if not r:
-            return {"ok": False, "message": "not found", "checked_at": time.time()}
-        if not r["enabled"]:
-            h = {"ok": None, "message": "disabled", "checked_at": time.time()}
-        else:
-            try:
-                ok, msg = self.test_remote(remote_id=remote_id)
-            except Exception as e:  # noqa: BLE001
-                ok, msg = False, str(e)
-            h = {"ok": ok, "message": msg, "checked_at": time.time()}
-            prev = self.remote_health.get(remote_id)
-            if prev and prev.get("ok") and not ok:
-                self.event("warning", "remote.unreachable", f"Remote '{r['name']}' became unreachable: {msg}", remote_id=remote_id)
-            elif prev and prev.get("ok") is False and ok:
-                self.event("info", "remote.reachable", f"Remote '{r['name']}' is reachable again", remote_id=remote_id)
-        self.remote_health[remote_id] = h
-        return h
+        # Serialized per remote: overlapping checks (startup, save, test button, schedule) must not
+        # overwrite a fresh result with an older one.
+        with self._health_lock(remote_id):
+            r = self.get_remote(remote_id)
+            if not r:
+                return {"ok": False, "message": "not found", "checked_at": time.time()}
+            if not r["enabled"]:
+                h = {"ok": None, "message": "disabled", "checked_at": time.time()}
+            else:
+                ok, msg = self._probe_remote(remote_id)
+                for _ in range(HEALTH_RETRIES):
+                    if ok:
+                        break
+                    # one failed connect (timeout, connection limit, network blip) is not an outage
+                    time.sleep(HEALTH_RETRY_DELAY)
+                    ok, msg = self._probe_remote(remote_id)
+                h = {"ok": ok, "message": msg, "checked_at": time.time()}
+                prev = self.remote_health.get(remote_id)
+                if prev and prev.get("ok") and not ok:
+                    self.event("warning", "remote.unreachable", f"Remote '{r['name']}' became unreachable: {msg}", remote_id=remote_id)
+                elif prev and prev.get("ok") is False and ok:
+                    self.event("info", "remote.reachable", f"Remote '{r['name']}' is reachable again", remote_id=remote_id)
+                if not ok:
+                    # don't leave a remote marked down for a whole health interval
+                    try:
+                        self.scheduler.add_job(self.check_remote_health, "date", args=[remote_id], id=f"health-recheck-{remote_id}",
+                                               run_date=datetime.now(timezone.utc) + timedelta(seconds=HEALTH_RECHECK_SECONDS),
+                                               replace_existing=True)
+                    except Exception:  # noqa: BLE001  (scheduler not running, e.g. in tests)
+                        pass
+            self.remote_health[remote_id] = h
+            return h
 
     def check_all_remotes(self) -> None:
         for r in self.list_remotes():

@@ -1,12 +1,14 @@
 """Notification channels: ntfy, email (SMTP), webhook."""
 from __future__ import annotations
 
+import html as _html
 import json
 import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from datetime import datetime
 
 import requests
 
@@ -59,10 +61,18 @@ class Notifier:
 
     # --- public --------------------------------------------------------------
     def notify(self, event: str, title: str, message: str, level: str = "info", *, html: str | None = None,
-               force: bool = False, channels: list[str] | None = None) -> dict[str, str]:
-        """Send to every enabled channel. Returns {channel: 'ok' | error}."""
+               force: bool = False, channels: list[str] | None = None, headline: str | None = None,
+               subject_name: str | None = None, facts: list[tuple[str, str]] | None = None) -> dict[str, str]:
+        """Send to every enabled channel. Returns {channel: 'ok' | error}.
+
+        ``headline`` (what happened, e.g. "Service down") and ``subject_name`` (what it happened to)
+        make up the header of the HTML email; without them they are taken from a "What: name" title.
+        ``facts`` are extra label/value rows shown under the message.
+        """
         if not force and not self.event_enabled(event):
             return {}
+        if html is None:
+            html = render_email_html(self.app_name, title, message, level, headline=headline, subject_name=subject_name, facts=facts)
         s = self.settings
         wanted = set(channels) if channels else {"ntfy", "email", "webhook"}
         results: dict[str, str] = {}
@@ -87,7 +97,7 @@ class Notifier:
         if channel == "ntfy":
             res = self._ntfy(cfg, title, msg, "info")
         elif channel == "email":
-            res = self._email(cfg, title, msg, f"<p>{msg}</p>")
+            res = self._email(cfg, title, msg, render_email_html(self.app_name, title, msg, "info", headline="Test notification", subject_name="Email channel"))
         elif channel == "webhook":
             res = self._webhook(cfg, "test", title, msg, "info")
         else:
@@ -171,3 +181,44 @@ class Notifier:
             return "ok"
         except requests.RequestException as e:
             return str(e)
+
+
+LEVEL_COLORS = {  # header background, header text
+    "error": ("#b91c1c", "#ffffff"),
+    "warning": ("#b45309", "#ffffff"),
+    "success": ("#15803d", "#ffffff"),
+    "info": ("#1d4ed8", "#ffffff"),
+}
+
+
+def split_title(title: str) -> tuple[str, str | None]:
+    """'Backup failed: vol1' -> ('Backup failed', 'vol1'); a title without ': ' has no name part."""
+    head, sep, name = title.partition(": ")
+    return (head.strip(), name.strip()) if sep and name.strip() else (title.strip(), None)
+
+
+def render_email_html(app_name: str, title: str, message: str, level: str = "info", *, headline: str | None = None,
+                      subject_name: str | None = None, facts: list[tuple[str, str]] | None = None,
+                      host: str | None = None) -> str:
+    """Single-column notification email: a coloured header with the issue and the affected name, then details."""
+    h = _html.escape
+    if headline is None:
+        headline, auto_name = split_title(title)
+        subject_name = subject_name or auto_name
+    bg, fg = LEVEL_COLORS.get(level, LEVEL_COLORS["info"])
+    paragraphs = "".join(f"<p style='margin:0 0 10px'>{h(line)}</p>" for line in message.split("\n") if line.strip())
+    rows = "".join(
+        f"<tr><td style='padding:4px 12px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top'>{h(k)}</td><td style='padding:4px 0'>{h(str(v))}</td></tr>"
+        for k, v in (facts or []) if v not in (None, ""))
+    when = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    return f"""<!doctype html><html><body style="margin:0;padding:20px;background:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb">
+<tr><td style="background:{bg};color:{fg};padding:18px 22px">
+<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.85">{h(headline)}</div>
+<div style="font-size:22px;font-weight:600;margin-top:4px">{h(subject_name or app_name)}</div>
+</td></tr>
+<tr><td style="padding:18px 22px;font-size:14px;line-height:1.5">{paragraphs}
+{f"<table cellspacing='0' cellpadding='0' style='font-size:13px;margin-top:6px'>{rows}</table>" if rows else ""}
+</td></tr>
+<tr><td style="padding:12px 22px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:11px">Sent by {h(app_name)}{f" on {h(host)}" if host else ""} · {h(when)}</td></tr>
+</table></body></html>"""

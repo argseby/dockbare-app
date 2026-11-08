@@ -670,3 +670,79 @@ def test_quiet_windows_and_notification_toggles(uptime_app, monkeypatch):
     up.poll()
     assert len(up.incidents(open_only=True)) == 1 and not sent
     assert c.put("/api/uptime/settings", json={"quiet_windows": [{"start": "25:00", "end": "26:00"}]}).status_code == 400
+
+
+def test_remote_health_retries_transient_failure(app, monkeypatch):
+    import dockbare.manager as mgrmod
+
+    m = app.extensions["dockbare"].manager
+    monkeypatch.setattr(mgrmod, "HEALTH_RETRY_DELAY", 0)
+    monkeypatch.setattr(m, "get_remote", lambda rid, **k: {"id": rid, "name": "Box", "enabled": True})
+    results = iter([(False, "TimeoutError: timed out"), (True, "ok")])
+    monkeypatch.setattr(m, "test_remote", lambda **k: next(results))
+    h = m.check_remote_health("r1")
+    assert h["ok"] is True  # one failed connect is not reported as unreachable
+
+    calls = []
+    monkeypatch.setattr(m, "test_remote", lambda **k: calls.append(1) or (False, "refused"))
+    h = m.check_remote_health("r1")
+    assert h["ok"] is False and len(calls) == 1 + mgrmod.HEALTH_RETRIES
+    assert m.scheduler.get_job("health-recheck-r1") is not None  # re-checked soon, not after a full interval
+
+
+def test_uptime_notify_after_minutes(uptime_app, monkeypatch):
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    sent = []
+    monkeypatch.setattr(core.manager.notifier, "notify", lambda event, title, msg, level="info", **kw: sent.append((title, level, kw)))
+    up = core.uptime
+    r = c.put("/api/uptime/monitors/db", json={"grace_seconds": 0, "notify_after_minutes": 30})
+    assert r.status_code == 200 and r.get_json()["notify_after_minutes"] == 30
+    # short outage: recorded, but neither a down nor a recovery notice
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1})
+    up.poll()
+    assert len(up.incidents(open_only=True)) == 1 and not sent
+    d.containers["db"].update({"state": "running", "status": "Up", "exit_code": None})
+    up.poll()
+    assert up.incidents(open_only=True) == [] and not sent
+    # long outage: notified once the delay has passed, then a recovery notice
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1})
+    up.poll()
+    inc = up.incidents(open_only=True)[0]
+    core.db.execute("UPDATE incidents SET started_at=? WHERE id=?", (time.time() - 31 * 60, inc["id"]))
+    up.poll()
+    up.poll()
+    assert [s[:2] for s in sent] == [("DOWN: db", "error")]
+    assert sent[0][2]["headline"] == "Service down" and sent[0][2]["subject_name"] == "db"
+    d.containers["db"].update({"state": "running", "status": "Up", "exit_code": None})
+    up.poll()
+    assert sent[-1][:2] == ("UP: db", "success") and sent[-1][2]["headline"] == "Service recovered"
+    # recovery notices can be switched off per service
+    c.put("/api/uptime/monitors/db", json={"notify_after_minutes": 0, "notify_recovery": False})
+    sent.clear()
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1}); up.poll()
+    d.containers["db"].update({"state": "running", "status": "Up", "exit_code": None}); up.poll()
+    assert [s[0] for s in sent] == ["DOWN: db"]
+
+
+def test_uptime_restart_notices_per_service(uptime_app, monkeypatch):
+    app, c, d = uptime_app
+    core = app.extensions["dockbare"]
+    sent = []
+    monkeypatch.setattr(core.manager.notifier, "notify", lambda event, title, msg, level="info", **kw: sent.append(title))
+    c.put("/api/uptime/monitors/db", json={"auto_restart": True, "grace_seconds": 0, "notify_restarts": False})
+    d.containers["db"].update({"state": "exited", "status": "Exited (1)", "exit_code": 1})
+    core.uptime.poll()
+    assert d.restarted == ["c-db"] and sent == ["DOWN: db"]
+
+
+def test_email_html_header():
+    from dockbare.notify import render_email_html, split_title
+
+    assert split_title("Backup failed: vol1") == ("Backup failed", "vol1")
+    assert split_title("Remote sync finished") == ("Remote sync finished", None)
+    html = render_email_html("Dockbare", "DOWN: web", "Container 'web' is exited <x>", "error", headline="Service down", subject_name="web",
+                             facts=[("Host", "srv1"), ("Empty", "")])
+    assert "Service down" in html and ">web<" in html and "#b91c1c" in html and "&lt;x&gt;" in html and "srv1" in html and "Empty" not in html
+    # without explicit header parts they come from the title
+    assert "Backup failed" in render_email_html("Dockbare", "Backup failed: vol1", "boom") and ">vol1<" in render_email_html("Dockbare", "Backup failed: vol1", "boom")

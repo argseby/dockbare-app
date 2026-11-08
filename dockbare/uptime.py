@@ -35,6 +35,9 @@ MONITOR_DEFAULTS = {
     "require_healthy": True,
     "alert_on_stop": False,
     "grace_seconds": 30,
+    "notify_after_minutes": 0,  # 0 = notify as soon as the incident opens
+    "notify_recovery": True,
+    "notify_restarts": True,
     "public": False,
     "display_name": "",
     "public_icon": "",
@@ -50,6 +53,8 @@ CHECK_DEFAULTS = {
     "grace_seconds": 30,
     "verify_tls": True,
     "notify": True,
+    "notify_after_minutes": 0,
+    "notify_recovery": True,
     "public": True,
     "public_icon": "",
     "public_url": "",
@@ -97,6 +102,11 @@ REPO_URL = "https://github.com/argseby/dockbare-app"
 HISTORY_DAYS_PUBLIC = 365  # daily bars on the status page (the page shows the selected window of it)
 HISTORY_HOURS_PUBLIC = 24  # hourly bars for the 24 h window
 HISTORY_DAYS_INTERNAL = 30
+MAX_NOTIFY_AFTER_MINUTES = 7 * 24 * 60
+KIND_LABELS = {"down": "exited", "dead": "dead", "oom": "killed (out of memory)", "unhealthy": "unhealthy", "restart-loop": "stuck in a restart loop",
+               "missing": "missing", "unreachable": "unreachable", "http-error": "answering with an error"}
+KIND_HEADLINES = {"down": "Service down", "dead": "Service down", "oom": "Out of memory", "unhealthy": "Service unhealthy",
+                  "restart-loop": "Restart loop", "missing": "Container missing", "unreachable": "Service unreachable", "http-error": "Service error"}
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 ANN_TYPES = ("incident", "maintenance")
 INCIDENT_STATUSES = ("investigating", "identified", "monitoring", "resolved")
@@ -227,6 +237,7 @@ class Uptime:
         cfg["max_restarts"] = max(0, min(100, cfg["max_restarts"]))
         cfg["restart_window_minutes"] = max(1, min(1440, cfg["restart_window_minutes"]))
         cfg["grace_seconds"] = max(0, min(3600, cfg["grace_seconds"]))
+        cfg["notify_after_minutes"] = max(0, min(MAX_NOTIFY_AFTER_MINUTES, cfg["notify_after_minutes"]))
         self._check_public_fields(cfg)
         self.m.db.execute("INSERT INTO monitors(name, config, updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET config=excluded.config, updated_at=excluded.updated_at",
                           (name, json.dumps(cfg), time.time()))
@@ -377,6 +388,8 @@ class Uptime:
                         inc = self._open_incident(c, kind, cfg, now, muted=bool(quiet and quiet["mode"] == "mute"))
                     elif inc is not None and inc["kind"] != kind:
                         self.m.db.execute("UPDATE incidents SET kind=?, detail=? WHERE id=?", (kind, self._detail(c, kind), inc["id"]))
+                    if inc is not None:
+                        self._maybe_notify_down(inc, c, cfg, now)
                     if inc is not None and cfg["auto_restart"] and kind in ("down", "dead", "unhealthy", "oom"):
                         self._maybe_restart(c, cfg, inc, now)
                 else:
@@ -393,6 +406,8 @@ class Uptime:
                 since = self._failing_since.setdefault(name, now)
                 if inc is None and now - since >= cfg["grace_seconds"]:
                     inc = self._open_incident({"name": name, "state": "missing"}, "missing", cfg, now)
+                elif inc is not None:
+                    self._maybe_notify_down(inc, {"name": name}, cfg, now)
                 snapshot[name] = {"name": name, "state": "missing", "status": "container not found", "monitored": True, "monitor": {**cfg, "explicit": True}, "failure": "missing", "incident": inc, "missing": True}
             # incidents whose container is no longer monitored → close as resolved-by-config
             for name, inc in open_incidents.items():
@@ -451,17 +466,58 @@ class Uptime:
 
     def _open_incident(self, c: dict, kind: str, cfg: dict, now: float, muted: bool = False) -> dict:
         detail = self._detail(c, kind)
-        cur = self.m.db.execute("INSERT INTO incidents(container, kind, started_at, detail, actions) VALUES(?,?,?,?,?)",
-                                (c["name"], kind, self._failing_since.get(c["name"], now), detail, "[]"))
-        inc = {"id": cur.lastrowid, "container": c["name"], "kind": kind, "started_at": self._failing_since.get(c["name"], now), "ended_at": None, "detail": detail, "actions": []}
-        label = {"down": "exited", "dead": "dead", "oom": "killed (out of memory)", "unhealthy": "unhealthy", "restart-loop": "stuck in a restart loop", "missing": "missing",
-                 "unreachable": "unreachable", "http-error": "answering with an error"}.get(kind, kind)
-        who = c.get("label") or f"Container '{c['name']}'"
-        msg = f"{who} is {label}" + (f": {self.detail_text(detail)}" if self.detail_text(detail) else "")
-        self.m.event("error", "uptime.down", msg + (" (quiet hours: not notified)" if muted else ""), data={"container": c["name"], "kind": kind, "incident": inc["id"], "muted": muted})
-        if cfg.get("notify", True) and self.settings().get("notify_down", True) and not muted:
-            self.m.notifier.notify("uptime", f"DOWN: {c.get('title') or c['name']}", msg, "error")
+        started = self._failing_since.get(c["name"], now)
+        cur = self.m.db.execute("INSERT INTO incidents(container, kind, started_at, detail, actions, notified_at) VALUES(?,?,?,?,?,?)",
+                                (c["name"], kind, started, detail, "[]", 0 if muted else None))
+        inc = {"id": cur.lastrowid, "container": c["name"], "kind": kind, "started_at": started, "ended_at": None, "detail": detail, "actions": [],
+               "notified_at": 0 if muted else None}
+        msg = self._down_message(c, kind, detail)
+        delay = int(cfg.get("notify_after_minutes") or 0)
+        note = " (quiet hours: not notified)" if muted else (f" (notification after {delay} min)" if delay and self._wants_down_notice(cfg) else "")
+        self.m.event("error", "uptime.down", msg + note, data={"container": c["name"], "kind": kind, "incident": inc["id"], "muted": muted})
+        self._maybe_notify_down(inc, c, cfg, now)
         return inc
+
+    def _down_message(self, c: dict, kind: str, detail: str, down_for: float | None = None) -> str:
+        who = c.get("label") or f"Container '{c['name']}'"
+        text = self.detail_text(detail)
+        msg = f"{who} is {KIND_LABELS.get(kind, kind)}" + (f": {text}" if text else "")
+        if down_for:
+            msg += f"\nDown for {_fmt_dur(down_for)} so far."
+        return msg
+
+    def _wants_down_notice(self, cfg: dict) -> bool:
+        return bool(cfg.get("notify", True) and self.settings().get("notify_down", True))
+
+    def _maybe_notify_down(self, inc: dict, c: dict, cfg: dict, now: float) -> None:
+        """Send the "down" notification once the incident has lasted the service's notify_after_minutes."""
+        if inc.get("notified_at") is not None or not self._wants_down_notice(cfg):
+            return
+        down_for = now - inc["started_at"]
+        if down_for < int(cfg.get("notify_after_minutes") or 0) * 60:
+            return
+        quiet = self.quiet_window(now)
+        if quiet and quiet.get("mode") == "mute":
+            return  # a delayed notice waits until the quiet window is over
+        self.m.db.execute("UPDATE incidents SET notified_at=? WHERE id=?", (now, inc["id"]))
+        inc["notified_at"] = now
+        name = c.get("title") or c["name"]
+        kind = inc["kind"]
+        delayed = bool(cfg.get("notify_after_minutes"))
+        self.m.notifier.notify("uptime", f"DOWN: {name}", self._down_message(c, kind, inc.get("detail") or "", down_for if delayed else None), "error",
+                               headline=KIND_HEADLINES.get(kind, "Service down"), subject_name=name,
+                               facts=self._facts(c, inc, now))
+
+    def _facts(self, c: dict, inc: dict, now: float) -> list[tuple[str, str]]:
+        facts = [("Since", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(inc["started_at"]))),
+                 ("Duration", _fmt_dur(now - inc["started_at"])), ("Host", self.m.hostname)]
+        if c.get("image"):
+            facts.append(("Image", c["image"]))
+        if c.get("status") and not c.get("label"):
+            facts.append(("Docker status", c["status"]))
+        elif c.get("status"):
+            facts.append(("Target", c["status"]))
+        return facts
 
     def _close_incident(self, inc: dict, c: dict, cfg: dict, now: float, note: str | None = None) -> None:
         self.m.db.execute("UPDATE incidents SET ended_at=? WHERE id=?", (now, inc["id"]))
@@ -469,8 +525,14 @@ class Uptime:
         who = c.get("label") or f"Container '{inc['container']}'"
         msg = f"{who} recovered after {_fmt_dur(dur)}" + (f" ({note})" if note else "")
         self.m.event("success", "uptime.up", msg, data={"container": inc["container"], "incident": inc["id"], "duration": dur})
-        if cfg.get("notify", True) and not note and self.settings().get("notify_recovery", True) and not self.quiet_window(now):
-            self.m.notifier.notify("uptime", f"UP: {c.get('title') or inc['container']}", msg, "success")
+        # a recovery is only worth a message when the outage was announced (not muted, not still within notify_after_minutes)
+        announced = bool(inc.get("notified_at"))
+        if (announced and cfg.get("notify", True) and cfg.get("notify_recovery", True) and not note
+                and self.settings().get("notify_recovery", True) and not self.quiet_window(now)):
+            name = c.get("title") or inc["container"]
+            self.m.notifier.notify("uptime", f"UP: {name}", msg, "success", headline="Service recovered", subject_name=name,
+                                   facts=[("Down from", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(inc["started_at"]))),
+                                          ("Downtime", _fmt_dur(dur)), ("Host", self.m.hostname)])
 
     def _maybe_restart(self, c: dict, cfg: dict, inc: dict, now: float) -> None:
         name = c["name"]
@@ -486,8 +548,9 @@ class Uptime:
                 inc["actions"] = actions
                 msg = f"Container '{name}' keeps failing; restart budget of {cfg['max_restarts']} per {cfg['restart_window_minutes']} min exhausted. Manual action needed."
                 self.m.event("error", "uptime.restart_budget", msg, data={"container": name})
-                if cfg.get("notify", True) and self.settings().get("notify_restart", True):
-                    self.m.notifier.notify("uptime", f"GIVING UP: {name}", msg, "error")
+                if cfg.get("notify", True) and cfg.get("notify_restarts", True) and self.settings().get("notify_restart", True):
+                    self.m.notifier.notify("uptime", f"GIVING UP: {name}", msg, "error", headline="Auto-restart gave up", subject_name=name,
+                                           facts=[("Restarts", f"{len(hist)} in {cfg['restart_window_minutes']} min"), ("Host", self.m.hostname)])
             return
         ok = self.m.docker.restart_container(c["id"]) if c.get("id") else False
         hist.append(now)
@@ -496,8 +559,11 @@ class Uptime:
         self.m.db.execute("UPDATE incidents SET actions=? WHERE id=?", (json.dumps(actions), inc["id"]))
         inc["actions"] = actions
         self.m.event("warning" if ok else "error", "uptime.restarted", f"Auto-restarted '{name}' ({len(hist)}/{cfg['max_restarts']} in window)" if ok else f"Auto-restart of '{name}' failed", data={"container": name})
-        if cfg.get("notify", True) and self.settings().get("notify_restart", True):
-            self.m.notifier.notify("uptime", f"Restarted: {name}", f"Dockbare restarted '{name}' automatically ({len(hist)}/{cfg['max_restarts']} in {cfg['restart_window_minutes']} min). Reason: {inc.get('detail')}", "warning")
+        if cfg.get("notify", True) and cfg.get("notify_restarts", True) and self.settings().get("notify_restart", True):
+            reason = self.detail_text(inc.get("detail")) or inc.get("kind", "")
+            self.m.notifier.notify("uptime", f"Restarted: {name}", f"Dockbare restarted '{name}' automatically ({len(hist)}/{cfg['max_restarts']} in {cfg['restart_window_minutes']} min). Reason: {reason}",
+                                   "warning" if ok else "error", headline="Automatic restart" if ok else "Automatic restart failed", subject_name=name,
+                                   facts=[("Reason", reason), ("Attempt", f"{len(hist)} of {cfg['max_restarts']}"), ("Host", self.m.hostname)])
 
     def restart_now(self, name: str) -> bool:
         c = self.snapshot.get(name) or next((x for x in self.m.docker.list_containers() if x["name"] == name), None)
@@ -920,6 +986,7 @@ class Uptime:
         cfg["interval_seconds"] = max(10, min(86400, cfg["interval_seconds"]))
         cfg["timeout_seconds"] = max(1, min(120, cfg["timeout_seconds"]))
         cfg["grace_seconds"] = max(0, min(3600, cfg["grace_seconds"]))
+        cfg["notify_after_minutes"] = max(0, min(MAX_NOTIFY_AFTER_MINUTES, cfg["notify_after_minutes"]))
         self._check_public_fields(cfg)
         cid = cid or uuid.uuid4().hex[:12]
         self.m.db.execute("INSERT INTO checks(id, name, config, updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, config=excluded.config, updated_at=excluded.updated_at",
@@ -1008,6 +1075,8 @@ class Uptime:
                     elif inc is not None and inc["kind"] != kind:
                         self.m.db.execute("UPDATE incidents SET kind=? WHERE id=?", (kind, inc["id"]))
                         inc["kind"] = kind
+                    if inc is not None:
+                        self._maybe_notify_down(inc, {"name": key, "title": c["name"], "label": f"Check '{c['name']}'", "error": res.get("error"), "status": c["url"]}, c, now)
                 else:
                     self._failing_since.pop(key, None)
                     if inc is not None:

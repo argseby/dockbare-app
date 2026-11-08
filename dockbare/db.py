@@ -123,7 +123,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     started_at REAL NOT NULL,
     ended_at REAL,
     detail TEXT,
-    actions TEXT
+    actions TEXT,
+    notified_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_container ON incidents(container, started_at);
 CREATE TABLE IF NOT EXISTS announcements (
@@ -186,6 +187,15 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(incidents)")}
+        if "notified_at" not in cols:
+            # when the "down" notification went out; NULL = not (yet) sent, 0 = suppressed (quiet hours)
+            self._conn.execute("ALTER TABLE incidents ADD COLUMN notified_at REAL")
+            # incidents from before this column were notified when they opened
+            self._conn.execute("UPDATE incidents SET notified_at=started_at")
 
     # --- low level -----------------------------------------------------------
     @contextmanager
