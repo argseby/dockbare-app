@@ -2,8 +2,10 @@
 
 Dockbare backs up my Docker volumes, encrypts them, pushes them to a couple of FTP/SFTP servers
 and gets everything back when a box dies. I built it for my own servers; it's free for anyone to
-use, no account, no license key, no telemetry. It is a personal project, not a product: no support
-promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway.
+use, no account, no license key, no telemetry. Along the way it grew into a small companion for the
+whole Docker host: uptime, resource monitoring with alerts, logs and a few safe cleanup tools. It is a
+personal project, not a product: no support promises, no roadmap, use it at your own risk. Issues and
+PRs are welcome anyway: <https://github.com/argseby/dockbare-app>.
 
 ![Dockbare dashboard](image.png)
 
@@ -38,8 +40,25 @@ promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway
   When a container goes down, its last log lines and last memory reading are kept with the incident;
   the log lines go into the notification only if you switch that on (logs can contain secrets). Peers show each other's load, and the public status page can
   show CPU, memory and disk if you turn it on.
+- **Utilities** (nothing here deletes anything unless you tick it and type `delete`):
+  - *Cleanup*: images and volumes no container uses (running or stopped), stopped containers and unused
+    build cache, with a Docker disk-usage bar that shows how much could be freed. Dockbare's own data
+    and images, volumes with a backup schedule, monitored containers and images other images need are
+    protected; volumes get a final backup (local and remotes) first and are only deleted when it
+    succeeded; everything is checked again right before removal, nothing is forced, and every deletion
+    is in the activity log.
+  - *Image updates*: which running containers have a newer image in their registry. Report only; it
+    never pulls or recreates anything.
+  - *Volumes*: browse a live volume or any backup read-only and download single files (folders as
+    `.tar`), and copy a volume to a new name (Docker cannot rename volumes; the source stays untouched
+    and an existing volume is never overwritten).
+  - *Docker engine*: version, drivers, Docker's own warnings and containers whose logs are not size
+    limited, with the fix.
+  - *Report*: an optional daily or weekly notification with what could be freed and which images have
+    updates.
+  - Start, stop and restart a container from its page under System (Dockbare won't stop itself).
 - **Config snapshot**: everything that isn't in `.env` (schedules, remotes, channels, peers, monitors,
-  report/uptime settings) is encrypted with the backup key and pushed to every remote whenever it changes.
+  report/uptime/metrics/utilities settings, alert rules) is encrypted with the backup key and pushed to every remote whenever it changes.
   Recovery imports it with one click.
 - **Reports** (daily / weekly / monthly) by email, ntfy or webhook: what was backed up, what failed,
   what got pruned, how much space is used, which schedules are overdue.
@@ -49,7 +68,7 @@ promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway
 ## Running it
 
 ```bash
-git clone <this repo> dockbare && cd dockbare
+git clone https://github.com/argseby/dockbare-app.git dockbare && cd dockbare
 cp .env.example .env
 docker run --rm -v "$PWD":/app -w /app python:3.12-slim sh -c "pip -q install -r requirements.txt && python -m dockbare gen-secret"
 nano .env               # admin password, secret key, encryption key (paste the generated values)
@@ -64,9 +83,12 @@ host, so put a TLS reverse proxy (Traefik, Caddy, nginx) in front for remote acc
 `DOCKBARE_BEHIND_PROXY=true`. Turn on TOTP if the UI is reachable from the internet.
 And **keep `DOCKBARE_ENCRYPTION_KEY` somewhere safe**; without it the encrypted backups are just noise.
 
+Optional: uncomment `- /proc:/host/proc:ro` in the compose file so the System page also shows the
+host's network traffic (everything else there works without it).
+
 ### Portainer
 
-Create a git stack pointing at this repository and put the settings from `.env.example` into the
+Create a git stack pointing at <https://github.com/argseby/dockbare-app> and put the settings from `.env.example` into the
 stack's *Environment variables* (Portainer writes them to `stack.env`, which both compose files read).
 Set `PROXY_NETWORK` to your reverse-proxy network and `DOCKBARE_PORT` if 5000 is taken.
 [docker-compose.yml](docker-compose.yml) publishes the port for a reverse proxy such as Nginx Proxy
@@ -105,7 +127,7 @@ Everything that matters for a reinstall lives in `.env`, so disaster recovery is
 
 See [.env.example](.env.example) for all of them with comments; only the admin password is required,
 everything else has a default or is optional. What is *not* in `.env` (schedules, retention, channels
-set up in the UI, peers, monitors, report/uptime settings) lives in `/data/dockbare.db`, with passwords
+set up in the UI, peers, monitors, alert rules, report/uptime/metrics/utilities settings) lives in `/data/dockbare.db`, with passwords
 encrypted by the secret key, and is what the configuration snapshot contains. Anything that comes from
 `.env` is left out of the snapshot on purpose, so the two never overlap: `.env` + snapshot = full setup.
 
@@ -185,10 +207,12 @@ Inside the container: `docker exec -it dockbare python -m dockbare check`.
  
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt     # Python 3.11+
 cp .env.example .env.dev            # point DOCKBARE_DATA_DIR / DOCKBARE_BACKUP_DIR at local folders
 DOCKBARE_ENV_FILE=.env.dev python -m dockbare serve
 pytest
 ```
+
+No local Python? `docker run --rm -v "$PWD":/app -w /app python:3.12-slim sh -c "pip -q install -r requirements-dev.txt && python -m pytest -q"`.
 
 Architecture, the encryption format and the security model are in [docs/DESIGN.md](docs/DESIGN.md).

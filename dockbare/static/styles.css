@@ -762,3 +762,28 @@ html[data-theme="dark"] .logview .ll.error { color: var(--danger-text); }
 .metrics-table tr.is-gone td b { font-weight: 500; }
 .chart-hint { color: var(--muted); display: inline-flex; cursor: help; align-self: center; }
 .chart-hint:hover, .chart-hint:focus { color: var(--text); outline: none; }
+
+/* utilities: cleanup */
+.cleanup-table .chk { width: 36px; padding-right: 0; }
+.cleanup-table input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+.cleanup-table tr.is-protected td { color: var(--muted); }
+.cleanup-table td.num, .cleanup-table th.num { text-align: right; white-space: nowrap; }
+.cleanup-bar { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; box-shadow: var(--shadow-lg); z-index: 5; }
+.cleanup-list { margin: 8px 0 12px; padding-left: 0; list-style: none; max-height: 240px; overflow: auto; display: grid; gap: 4px; font-size: 13px; }
+.cleanup-list li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mt-xs { margin-top: 6px; }
+@media (max-width: 640px) { .cleanup-bar { flex-wrap: wrap; } .cleanup-bar .btn { width: 100%; justify-content: center; } }
+.m-12 { margin: 12px; } .p-list { padding: 8px 16px; }
+.du-bar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; background: var(--surface-3); gap: 2px; }
+.du-seg { position: relative; height: 100%; min-width: 3px; background: var(--c); }
+.du-seg i { position: absolute; right: 0; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, rgba(255,255,255,.55) 0 3px, transparent 3px 7px); }
+html[data-theme="dark"] .du-seg i { background: repeating-linear-gradient(135deg, rgba(0,0,0,.45) 0 3px, transparent 3px 7px); }
+.du-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+.du-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.du-sw { width: 10px; height: 10px; border-radius: 2px; background: var(--c); display: inline-block; }
+.s4 { --c: #e8a317; }
+.crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.check-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: start; padding: 11px 16px; border-bottom: 1px solid var(--border); }
+.check-row:last-child { border-bottom: 0; }
+@media (max-width: 640px) { .check-row { grid-template-columns: 1fr; gap: 4px; } }
+.ctl-btns { display: inline-flex; gap: 6px; }

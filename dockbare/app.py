@@ -20,6 +20,8 @@ from .peers import Peers
 from .uptime import Uptime
 from .metrics import Metrics
 from .alerts import Alerts
+from .cleanup import Cleanup
+from .utilities import Utilities
 from .configsync import ConfigSync
 from .recovery import Recovery
 from .reports import Reports
@@ -93,6 +95,10 @@ class Core:
         self.alerts = Alerts(self.manager)
         self.manager.alerts = self.alerts
         self.metrics.listeners.append(self.alerts.evaluate)
+        self.cleanup = Cleanup(self.manager)
+        self.manager.cleanup = self.cleanup
+        self.utilities = Utilities(self.manager)
+        self.manager.utilities = self.utilities
         self.configsync = ConfigSync(self.manager)
         self.manager.configsync = self.configsync
         self.auth = Auth(settings, self.db, on_event=self.manager.event, notify=self.manager.notifier.notify, secretbox=self.secretbox)
@@ -117,6 +123,7 @@ class Core:
         self.peers.install_job()
         self.uptime.start(background=not self.settings.testing)
         self.alerts.seed()
+        self.utilities.install_job()
         self.metrics.start(background=not self.settings.testing)
         self.configsync.install_job()
 

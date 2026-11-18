@@ -606,6 +606,98 @@ def alerts_delete(rid):
     return jsonify({"ok": True})
 
 
+# ------------------------------------------------------------------- cleanup
+@api.get("/cleanup")
+def cleanup_scan():
+    """Unused images, volumes and build cache. Lists only; nothing is deleted here."""
+    return jsonify(core().cleanup.scan(with_sizes=request.args.get("sizes", "1") != "0"))
+
+
+@api.post("/cleanup/run")
+def cleanup_run():
+    """Delete exactly the listed items (each is checked again before removal)."""
+    data = body()
+    t = core().cleanup.start(data.get("images") or [], data.get("volumes") or [],
+                             backup_first=data.get("backup_first", True) is not False, build_cache=bool(data.get("build_cache")),
+                             containers=data.get("containers") or [])
+    return jsonify({"task": t.to_dict()})
+
+
+# ----------------------------------------------------------------- utilities
+@api.get("/utilities/engine")
+def utilities_engine():
+    return jsonify(core().utilities.engine())
+
+
+@api.get("/utilities/updates")
+def utilities_updates():
+    return jsonify({"last": core().utilities.last_update_check()})
+
+
+@api.post("/utilities/updates")
+def utilities_updates_check():
+    return jsonify({"task": core().utilities.start_update_check().to_dict()})
+
+
+@api.get("/utilities/settings")
+def utilities_settings_get():
+    return jsonify(core().utilities.settings())
+
+
+@api.put("/utilities/settings")
+def utilities_settings_put():
+    return jsonify(core().utilities.save_settings(body()))
+
+
+@api.post("/utilities/report")
+def utilities_report_now():
+    """Send the cleanup/update report now (to test the channels); never deletes anything."""
+    return jsonify(core().utilities.send_report(force=True))
+
+
+@api.post("/containers/<name>/<action>")
+def container_action(name, action):
+    if not LOG_NAME_RE.match(name):
+        return err("Invalid container name.", 400)
+    return jsonify(core().utilities.container_action(name, action))
+
+
+@api.get("/browse/volume/<name>")
+def browse_volume(name):
+    return jsonify(core().utilities.browse_volume(name, request.args.get("path", "")))
+
+
+@api.get("/browse/volume/<name>/download")
+def browse_volume_download(name):
+    fname, mime, stream = core().utilities.volume_download(name, request.args.get("path", ""))
+    return Response(stream_with_context(stream), mimetype=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{_safe_filename(fname)}"', "Cache-Control": "no-store"})
+
+
+@api.get("/browse/backup")
+def browse_backup():
+    return jsonify(core().utilities.browse_backup(request.args.get("backup", ""), request.args.get("path", "")))
+
+
+@api.get("/browse/backup/download")
+def browse_backup_download():
+    fname, stream = core().utilities.backup_download(request.args.get("backup", ""), request.args.get("path", ""))
+    return Response(stream_with_context(stream), mimetype="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{_safe_filename(fname)}"', "Cache-Control": "no-store"})
+
+
+@api.post("/volumes/copy")
+def volume_copy():
+    data = body()
+    t = core().utilities.start_copy(str(data.get("source") or ""), str(data.get("target") or "").strip(),
+                                    stop_containers=data.get("stop_containers", True) is not False)
+    return jsonify({"task": t.to_dict()})
+
+
+def _safe_filename(name: str) -> str:
+    return re.sub(r'[^A-Za-z0-9._ -]', "_", name or "download")[:150] or "download"
+
+
 # ---------------------------------------------------------------------- logs
 LOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 

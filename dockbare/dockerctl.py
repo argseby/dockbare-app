@@ -97,6 +97,14 @@ def parse_log_lines(raw: bytes | str) -> list[tuple[float, str]]:
     return out
 
 
+def _api_message(e: Exception) -> str:
+    """The daemon's own explanation (e.g. "volume is in use") instead of the full HTTP error."""
+    expl = getattr(e, "explanation", None)
+    if isinstance(expl, bytes):
+        expl = expl.decode("utf-8", "replace")
+    return str(expl or e)
+
+
 class DockerCtl:
     def __init__(self, helper_image: str | None = None, timeout: int = 120):
         self._client: docker.DockerClient | None = None
@@ -312,6 +320,182 @@ class DockerCtl:
         except DockerException as e:
             raise DockerError(f"Cannot read container logs: {e}") from e
         return parse_log_lines(raw)
+
+    # --- cleanup ---------------------------------------------------------------
+    def cleanup_inventory(self, with_sizes: bool = True) -> dict:
+        """Raw containers (all, including stopped and Dockbare's helpers), top-level images, volumes and disk usage."""
+        api = self.client.api
+        try:
+            containers = api.containers(all=True)
+            images = api.images()
+            volumes = (api.volumes() or {}).get("Volumes") or []
+        except DockerException as e:
+            raise DockerError(f"Cannot list Docker objects: {e}") from e
+        df = None
+        if with_sizes:
+            try:
+                df = api.df()  # computes volume sizes; can take a few seconds on big volumes
+            except DockerException as e:
+                log.warning("Docker disk usage unavailable: %s", e)
+        return {"containers": containers, "images": images, "volumes": volumes, "df": df}
+
+    def image_id(self, ref: str) -> str | None:
+        try:
+            return self.client.api.inspect_image(ref).get("Id")
+        except DockerException:
+            return None
+
+    def protected_image_ids(self) -> set[str]:
+        """Images Dockbare needs for backups and restores: its own image and the helper image (never pulled here)."""
+        ids: set[str] = set()
+        try:
+            own = self.own_container()
+            if own is not None:
+                ids.add(own.image.id)
+        except Exception:  # noqa: BLE001
+            pass
+        for ref in (self._helper_image, self._helper_override, FALLBACK_IMAGE):
+            if ref:
+                iid = self.image_id(ref)
+                if iid:
+                    ids.add(iid)
+        return ids
+
+    def volume_users(self, name: str) -> list[str]:
+        """Names of all containers (running or not, helpers included) that mount the volume."""
+        try:
+            cs = self.client.api.containers(all=True, filters={"volume": name})
+        except DockerException as e:
+            raise DockerError(f"Cannot check volume users: {e}") from e
+        return [(c.get("Names") or ["/?"])[0].lstrip("/") for c in cs]
+
+    def remove_image(self, ref: str) -> None:
+        """Remove an image or one of its tags. Never forced: Docker refuses images that are in use."""
+        try:
+            self.client.api.remove_image(ref, force=False, noprune=False)
+        except NotFound:
+            return
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+
+    def remove_volume(self, name: str) -> None:
+        """Remove a volume. Never forced: Docker refuses volumes that are in use."""
+        try:
+            self.client.api.remove_volume(name, force=False)
+        except NotFound:
+            return
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+
+    def container_raw(self, cid: str) -> dict | None:
+        try:
+            return self.client.api.inspect_container(cid)
+        except NotFound:
+            return None
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+
+    def remove_container(self, cid: str) -> None:
+        """Remove a stopped container. Its volumes are kept; never forced, so running containers are refused."""
+        try:
+            self.client.api.remove_container(cid, v=False, force=False)
+        except NotFound:
+            return
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+
+    # --- utilities -------------------------------------------------------------
+    def engine_info(self) -> dict:
+        try:
+            return {"info": self.client.info(), "version": self.client.version()}
+        except DockerException as e:
+            raise DockerError(f"Cannot read Docker info: {e}") from e
+
+    def container_log_configs(self) -> list[dict]:
+        """Name, state and logging driver/options of every container (helpers excluded)."""
+        out = []
+        try:
+            for c in self.client.api.containers(all=True):
+                if (c.get("Labels") or {}).get(HELPER_LABEL):
+                    continue
+                a = self.client.api.inspect_container(c["Id"])
+                lc = (a.get("HostConfig") or {}).get("LogConfig") or {}
+                out.append({"name": (c.get("Names") or ["/?"])[0].lstrip("/"), "state": c.get("State"),
+                            "driver": lc.get("Type") or "", "options": lc.get("Config") or {}})
+        except DockerException as e:
+            raise DockerError(f"Cannot read container log settings: {e}") from e
+        return out
+
+    def running_image_refs(self) -> list[dict]:
+        """Image reference (as written in compose/run), image id and name of every running container."""
+        try:
+            cs = self.client.api.containers()
+        except DockerException as e:
+            raise DockerError(f"Cannot list containers: {e}") from e
+        return [{"name": (c.get("Names") or ["/?"])[0].lstrip("/"), "ref": c.get("Image") or "", "image_id": c.get("ImageID") or "",
+                 "labels": c.get("Labels") or {}} for c in cs if not (c.get("Labels") or {}).get(HELPER_LABEL)]
+
+    def image_repo_digests(self, image_id: str) -> list[str] | None:
+        try:
+            return self.client.api.inspect_image(image_id).get("RepoDigests") or []
+        except NotFound:
+            return None
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+
+    def registry_digest(self, ref: str) -> str:
+        """Digest the registry currently serves for a tag (asks the daemon, which talks to the registry)."""
+        try:
+            d = self.client.api.inspect_distribution(ref)
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+        return ((d or {}).get("Descriptor") or {}).get("digest") or ""
+
+    _LIST_SCRIPT = (
+        'cd "/data/$1" 2>/dev/null || { echo "__NOTDIR__"; exit 0; }; '
+        'case "$(pwd -P)" in /data|/data/*) ;; *) echo "__OUTSIDE__"; exit 0;; esac; '
+        'for f in * .[!.]* ..?*; do if [ -e "$f" ] || [ -L "$f" ]; then stat -c "%F|%s|%Y|%n" "./$f"; fi; done | head -n 2001'
+    )
+
+    def list_volume_dir(self, volume: str, rel: str) -> list[dict] | None:
+        """Entries of one folder in a volume (read-only helper; symlinks are listed, never followed out of the volume).
+
+        Returns None when the path is not a folder inside the volume."""
+        out = self._run_helper(self.helper_image(), ["sh", "-c", self._LIST_SCRIPT, "sh", rel], volume, "ro", timeout=120)
+        if "__NOTDIR__" in out or "__OUTSIDE__" in out:
+            return None
+        entries = []
+        for line in out.splitlines():
+            parts = line.split("|", 3)
+            if len(parts) != 4 or not parts[3].startswith("./"):
+                continue
+            kind, size, mtime, name = parts
+            t = "dir" if "directory" in kind else "link" if "symbolic" in kind else "file" if "regular" in kind else "other"
+            try:
+                entries.append({"name": name[2:], "type": t, "size": int(size), "mtime": int(mtime)})
+            except ValueError:
+                continue
+        return entries
+
+    def volume_path_archive(self, volume: str, rel: str, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
+        """Tar stream of one file or folder inside a volume (read-only helper)."""
+        with self._helper(volume, "ro") as c:
+            try:
+                stream, _stat = c.get_archive(f"{DATA_MOUNT}/{rel}" if rel else f"{DATA_MOUNT}/.", chunk_size=chunk_size)
+            except NotFound as e:
+                raise DockerError("Not found in the volume.") from e
+            except APIError as e:
+                raise DockerError(_api_message(e)) from e
+            for chunk in stream:
+                yield chunk
+
+    def prune_build_cache(self) -> int:
+        """Remove build cache that no build uses (``docker builder prune``). Returns bytes reclaimed."""
+        try:
+            r = self.client.api.prune_builds()
+        except DockerException as e:
+            raise DockerError(_api_message(e)) from e
+        return int((r or {}).get("SpaceReclaimed") or 0)
 
     def restart_container(self, cid: str, timeout: int = 10) -> bool:
         try:

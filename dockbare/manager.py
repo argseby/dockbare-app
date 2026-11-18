@@ -78,6 +78,8 @@ class Manager:
         self.uptime = None  # set by app wiring
         self.metrics = None  # set by app wiring
         self.alerts = None  # set by app wiring
+        self.cleanup = None  # set by app wiring
+        self.utilities = None  # set by app wiring
         self.configsync = None  # set by app wiring
 
     # ------------------------------------------------------------------ start

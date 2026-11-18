@@ -36,6 +36,8 @@ dockbare/
   metrics.py     resource metrics: collector, rollups, forecast, read API
   hostmetrics.py host metrics from /proc and /sys
   alerts.py      alert rules on metrics and container logs
+  cleanup.py     removal of unused images, volumes, stopped containers and build cache
+  utilities.py   engine health, image updates, report, container actions, volume browser and copy
   recovery.py    remote scan, local comparison, restore plan execution
   manager.py     orchestration: backups, uploads, sync, schedules, prune, restore
   auth.py        login, sessions, throttling, TOTP, CSRF, security headers
@@ -178,6 +180,49 @@ site only when that site enables it (metrics setting `public_host`). Reports get
 section: host averages and peaks, disks with forecast, top 3 containers by CPU and memory, and the
 alerts fired in the period (which mark the report as having problems).
 The System page (`static/system.js`, charts in `static/charts.js`) shows all of it.
+
+### Cleanup (`cleanup.py`)
+
+The Utilities page lists unused images (not referenced by any container, running or stopped),
+unused volumes (not mounted by any container, Dockbare's helper containers included), stopped
+containers (`exited`, `created`, `dead`; not Dockbare's helpers or its own container) and unused build
+cache, plus a disk-usage breakdown from `/system/df`, and deletes exactly the items the user selects.
+Containers are removed with `v=False` (their volumes stay and show up in the next scan). Safety layers:
+
+1. The scan never deletes; nothing is pre-selected; the UI asks to type `delete`.
+2. Protected, never deleted even when requested: volumes labelled `dev.dockbare.internal` (not even
+   listed), volumes with a backup schedule or a running task, Dockbare's own image and the helper
+   image, images other images are built on, and stopped containers with an explicit Uptime monitor.
+3. The run scans again and only acts on items that are still candidates; volumes must also have the
+   same creation time as in the scan (a volume recreated under the same name is skipped).
+4. Volumes get a final backup first by default (`_do_backup` with the volume's normal remotes);
+   a failed backup or upload keeps the volume. The newest backup of a volume is never pruned.
+5. Right before removing a volume its users are checked again; Docker removals are never forced, so
+   the daemon refuses anything in use. Multi-tag images are untagged one tag at a time for the same
+   reason. Every removal is a `cleanup.*` event; the run is a task with a full log.
+
+### Utilities (`utilities.py`)
+
+* **Engine health**: `/info` and `/version`, Docker's own warnings, and the log configuration of every
+  container (`json-file` without `max-size` grows forever and is flagged with the daemon.json fix).
+* **Image updates** (task): for each image reference of a running container, the local `RepoDigests`
+  are compared with the digest the registry serves now (`/distribution/{name}/json`, asked through the
+  daemon so its registry logins apply). Locally built, digest-pinned and id-started images are
+  reported as such. Result stored in the `image_updates` setting. It never pulls or recreates.
+* **Scheduled report**: off / daily / weekly at a time (APScheduler cron job `utilities-report`); runs
+  the cleanup scan and optionally the update check and notifies on the `utilities` event when at least
+  `report_min_gb` could be freed or updates exist. It never deletes.
+* **Container actions**: start / stop / restart by name, refused for Dockbare's own container
+  (except start); `container.action` events; uptime re-polls right after.
+* **Volume browser**: folders are listed by a read-only helper container running a POSIX `sh` + `stat`
+  loop (works with the Dockbare image and the busybox fallback); `pwd -P` must stay under `/data`, so a
+  symlink can never lead out of the volume, and symlinks are never downloaded. Paths are normalised and
+  any `..` component is refused. A file is streamed out of the Docker archive API (its single tar member);
+  a folder is returned as `.tar`. Backups are browsed by streaming (decrypt → gunzip → tar) once and
+  caching the index of the last three backups in memory; single files are streamed out the same way.
+* **Volume copy** (task): refuses an existing target (checked again inside the task), optionally stops
+  the source's running containers, creates the target and pipes the source's archive stream into it
+  (`restore_archive(clear=False)`); the source is never written to.
 
 ### Configuration snapshot (`configsync.py`)
 

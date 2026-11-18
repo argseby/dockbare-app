@@ -29,6 +29,7 @@ NOTIFY_EVENTS = {
     "peer": {"label": "Peer instance down / recovered / problems", "default": True},
     "uptime": {"label": "Container down / recovered / auto-restarted", "default": True},
     "metrics": {"label": "Resource and log alerts (CPU, memory, disk, log patterns)", "default": True},
+    "utilities": {"label": "Scheduled cleanup and image update report", "default": True},
     "report": {"label": "Periodic reports", "default": True},
 }
 

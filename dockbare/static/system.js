@@ -356,7 +356,10 @@ async function renderContainer(page, el, name, live = () => true) {
   const limit = limited ? l.mem_limit : null;
   const base = { since: d.since, now: d.now, bucket: d.bucket, marks: d.backups };
   top.innerHTML = `
-    <div class="flex mb flex-wrap"><a class="btn btn-sm" href="#system">${icon("arrow-right", "sm flip")} All containers</a><h2 class="grow">${esc(d.name)}</h2>${stateBadge(d)}${d.image ? `<span class="tag">${esc(d.image)}</span>` : ""}${rangeSeg()}</div>
+    <div class="flex mb flex-wrap"><a class="btn btn-sm" href="#system">${icon("arrow-right", "sm flip")} All containers</a><h2 class="grow">${esc(d.name)}</h2>${stateBadge(d)}${d.image ? `<span class="tag">${esc(d.image)}</span>` : ""}
+      <span class="ctl-btns">${d.state === "running"
+        ? `<button class="btn btn-sm" data-action="ctl" data-op="restart">${icon("refresh")} Restart</button><button class="btn btn-sm btn-danger-ghost" data-action="ctl" data-op="stop">${icon("pause")} Stop</button>`
+        : d.state && d.state !== "gone" ? `<button class="btn btn-sm" data-action="ctl" data-op="start">${icon("play")} Start</button>` : ""}</span>${rangeSeg()}</div>
     <div class="kpis mb">
       <div class="card stat"><div class="label">${icon("cpu", "sm")} CPU</div><div class="value">${l ? pct(l.cpu) : "—"}</div><div class="sub">100% = one core · host has ${h.cpus || "?"}</div></div>
       <div class="card stat"><div class="label">${icon("layers", "sm")} Memory</div><div class="value">${l ? esc(fmtBytes(l.mem)) : "—"}</div>${limited ? meter((l.mem / l.mem_limit) * 100, 85, 95) : ""}<div class="sub">${!l ? "" : limited ? `limit ${esc(fmtBytes(l.mem_limit))} · ${pct((l.mem / l.mem_limit) * 100)}` : "no limit set"}</div></div>
@@ -377,7 +380,17 @@ async function renderContainer(page, el, name, live = () => true) {
     $(`[data-legend=${k}]`, top).innerHTML = legendHtml(d.backups.length ? [...c.series, { label: "Backup run", cls: "bk" }] : c.series);
     lineChart($(`[data-chart=${k}]`, top), { ...base, ...c });
   }
-  bind(top, { range: (b) => { range = b.dataset.range; store.set("range", range); renderContainer(page, el, name); } });
+  bind(top, {
+    range: (b) => { range = b.dataset.range; store.set("range", range); renderContainer(page, el, name); },
+    ctl: async (b) => {
+      const op = b.dataset.op;
+      const text = op === "stop" ? `Stop <b>${esc(name)}</b>? If Uptime monitors it, this shows as an outage.`
+        : op === "restart" ? `Restart <b>${esc(name)}</b>? It is briefly unavailable.` : `Start <b>${esc(name)}</b>?`;
+      if (!(await confirmDialog({ title: `${op[0].toUpperCase()}${op.slice(1)} container`, text, confirmLabel: op[0].toUpperCase() + op.slice(1), danger: op === "stop" }))) return;
+      await busy(b, async () => { await api.post(`/api/containers/${encodeURIComponent(name)}/${op}`, {}); toast(`${name}: ${op} done`, "success"); renderContainer(page, el, name); })
+        .catch((e) => toast(e.message, "error", 7000));
+    },
+  });
 }
 
 export const system = {

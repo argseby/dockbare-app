@@ -79,6 +79,7 @@ class ConfigSync:
             "uptime": m.uptime.settings() if m.uptime else None,
             "metrics": m.metrics.settings() if getattr(m, "metrics", None) else None,
             "alert_rules": m.alerts.rules() if getattr(m, "alerts", None) else [],
+            "utilities": m.utilities.settings() if getattr(m, "utilities", None) else None,
             "totp": ({"secret": m.auth.totp_secret(), "recovery": m.db.get_setting("totp_recovery") or []}
                      if (include_secrets and getattr(m, "auth", None) and m.auth.totp_source == "ui") else None),
         }
@@ -116,7 +117,7 @@ class ConfigSync:
     def apply(self, doc: dict, *, sections: list[str] | None = None) -> dict:
         """Import a snapshot. Rows configured through .env are never touched."""
         m = self.m
-        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime", "metrics", "alert_rules", "totp"])
+        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime", "metrics", "alert_rules", "utilities", "totp"])
         summary: dict = {}
         if "remotes" in want:
             n = 0
@@ -194,6 +195,9 @@ class ConfigSync:
                 except ManagerError as e:
                     log.warning("Skipped alert rule %s: %s", r.get("name"), e)
             summary["alert_rules"] = n
+        if "utilities" in want and getattr(m, "utilities", None) and isinstance(doc.get("utilities"), dict):
+            m.utilities.save_settings(doc["utilities"])
+            summary["utilities"] = True
         if "totp" in want and isinstance(doc.get("totp"), dict) and doc["totp"].get("secret") and getattr(m, "auth", None) and m.auth.totp_source != "env":
             m.db.set_setting("totp_secret", m.secretbox.encrypt(doc["totp"]["secret"]))
             m.db.set_setting("totp_recovery", list(doc["totp"].get("recovery") or []))

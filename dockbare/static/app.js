@@ -3,13 +3,14 @@ import { $, $$, esc, icon, api, toast, taskLogModal, applyWidths } from "./ui.js
 import * as P from "./pages.js";
 import * as P2 from "./pages2.js";
 import { system } from "./system.js";
+import { utilities } from "./utilities.js";
 
 const NAV = [
   ["dashboard", "Dashboard", "dashboard"], ["volumes", "Volumes & Backups", "database"], ["schedules", "Schedules", "calendar"],
-  ["remotes", "Remotes", "server"], ["peers", "Peers", "heart-pulse"], ["uptime", "Uptime", "radar"], ["system", "System", "cpu"], ["recovery", "Recovery", "life-buoy"], ["reports", "Reports", "chart"],
+  ["remotes", "Remotes", "server"], ["peers", "Peers", "heart-pulse"], ["uptime", "Uptime", "radar"], ["system", "System", "cpu"], ["utilities", "Utilities", "wrench"], ["recovery", "Recovery", "life-buoy"], ["reports", "Reports", "chart"],
   ["activity", "Activity", "activity"], ["settings", "Settings", "settings"],
 ];
-const PAGES = { dashboard: P.dashboard, volumes: P.volumes, schedules: P.schedules, remotes: P2.remotes, peers: P2.peers, uptime: P2.uptime, system, recovery: P2.recovery, reports: P2.reports, activity: P2.activity, settings: P2.settings };
+const PAGES = { dashboard: P.dashboard, volumes: P.volumes, schedules: P.schedules, remotes: P2.remotes, peers: P2.peers, uptime: P2.uptime, system, utilities, recovery: P2.recovery, reports: P2.reports, activity: P2.activity, settings: P2.settings };
 
 const theme = {
   get: () => localStorage.getItem("dockbare.theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"),

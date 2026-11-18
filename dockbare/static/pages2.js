@@ -121,7 +121,7 @@ export const recovery = {
       importCfg: async (b) => {
         const inst = b.dataset.inst || null;
         const ok = await confirmDialog({ title: "Import configuration", confirmLabel: "Import", text: `Import the configuration snapshot of <b>${esc(inst || "flat layout")}</b> into this instance? Existing entries with the same name/id are overwritten; anything defined in <code>.env</code> is left alone.`,
-          extra: `<div class="stack gap-2 mt">${["schedules", "remotes", "notifications", "reports", "peers", "monitors", "uptime", "metrics", "alert_rules", "general"].map((k) => `<label class="check"><input type="checkbox" name="sections" data-multi="1" value="${k}" checked> ${k}</label>`).join("")}</div>` });
+          extra: `<div class="stack gap-2 mt">${["schedules", "remotes", "notifications", "reports", "peers", "monitors", "uptime", "metrics", "alert_rules", "utilities", "general"].map((k) => `<label class="check"><input type="checkbox" name="sections" data-multi="1" value="${k}" checked> ${k}</label>`).join("")}</div>` });
         if (!ok) return;
         await busy(b, async () => { const r = await api.post("/api/recovery/config/import", { remote: state.recoveryScan.remote.id, instance: inst, sections: ok.sections || [] }); toast(`Imported: ${Object.entries(r.summary).map(([k, v]) => `${k} ${v === true ? "✓" : v}`).join(", ")}`, "success", 9000); }).catch((e) => toast(e.message, "error"));
       },
