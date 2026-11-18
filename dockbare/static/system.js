@@ -16,7 +16,12 @@ const pct = (v, dec = 1) => `${(v ?? 0).toFixed(dec)}%`;
 const pctFmt = (v, axisMax) => pct(v, axisMax != null && axisMax >= 3 ? 0 : 1);
 const rate = (v) => `${fmtBytes(Math.round(v || 0))}/s`;
 const rateShort = (v) => fmtBytes(Math.round(v || 0)).replace(" ", "");
-const bytesAxis = (v) => fmtBytes(Math.round(v), 0);
+// axis labels: one decimal only where needed ("2.5 MB", "5 MB")
+const bytesAxis = (v) => fmtBytes(Math.round(v), 1).replace(/\.0 /, " ");
+const bytesTip = (v) => fmtBytes(Math.round(v), 1);
+const rateAxis = (v) => `${bytesAxis(v)}/s`;
+// one fill bar under a KPI value: how full something is (0–100 %)
+const meter = (p, warn, bad) => (p == null ? "" : `<div class="meter" title="${pct(p)}"><i class="${p >= bad ? "bad" : p >= warn ? "warn" : ""}" data-w="${Math.min(100, p).toFixed(1)}"></i></div>`);
 const num = (v, dec = 1) => (v == null ? "—" : Number(v).toFixed(dec));
 
 function stateBadge(c) {
@@ -95,13 +100,16 @@ function alertBadge(st) {
 }
 
 function alertsCard(rules, metrics) {
-  return `<div class="card mb"><div class="card-h"><h2>${icon("bell", "sm")} Alerts</h2><span class="muted small">notified through the channels in Settings (event "Resource and log alerts")</span><div class="actions"><button class="btn btn-sm" data-action="addRule">${icon("plus")} Add rule</button></div></div>
-    <div class="card-c tight">${rules.length ? `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Rule</th><th>Now</th><th></th></tr></thead><tbody>
-    ${rules.map((r) => `<tr class="${r.enabled ? "" : "muted"}"><td>${alertBadge(r.status)}</td>
-      <td><b>${esc(r.name)}</b>${r.severity === "error" ? ` <span class="badge outline">error</span>` : ""}<div class="muted small">${esc(ruleText(r, metrics))}</div></td>
-      <td class="small">${r.targets.length ? r.targets.map((t) => `<div><span class="dot ${t.status === "firing" ? "bad" : "warn"}"></span> ${t.target ? `${esc(t.target)}: ` : ""}<b>${num(t.value, t.value >= 100 ? 0 : 1)}${esc(r.unit === "%" ? "%" : r.unit ? " " + r.unit : "")}</b> <span class="muted">since ${esc(ago(t.since))}</span></div>`).join("") : `<span class="muted">—</span>`}</td>
-      <td><div class="actions"><label class="check" title="${r.enabled ? "Disable" : "Enable"}"><span class="switch"><input type="checkbox" data-action="toggleRule" data-id="${esc(r.id)}" ${r.enabled ? "checked" : ""}><span class="track"></span></span></label><button class="btn btn-sm btn-ghost btn-icon" data-action="editRule" data-id="${esc(r.id)}" title="Edit">${icon("pencil")}</button><button class="btn btn-sm btn-danger-ghost btn-icon" data-action="delRule" data-id="${esc(r.id)}" title="Delete">${icon("trash")}</button></div></td></tr>`).join("")}
-    </tbody></table></div>` : emptyState("No alert rules. Add one to get notified about CPU, memory, disk space or log messages.", "bell")}</div></div>`;
+  const now = (r, t) => `${t.target ? `${esc(t.target)}: ` : ""}<b>${num(t.value, t.value >= 100 ? 0 : 1)}${esc(r.unit === "%" ? "%" : r.unit ? " " + r.unit : "")}</b> <span class="muted">· ${esc(t.status)} since ${esc(ago(t.since))}</span>`;
+  return `<div class="card mb"><div class="card-h wrap"><h2>${icon("bell", "sm")} Alerts</h2><span class="muted small hide-sm">sent through the channels in Settings ("Resource and log alerts")</span><div class="actions"><button class="btn btn-sm" data-action="addRule">${icon("plus")} Add rule</button></div></div>
+    <div class="card-c tight">${rules.length ? `<div class="rule-list">
+    ${rules.map((r) => `<div class="rule-row ${r.enabled ? "" : "is-off"}">
+      <div class="rule-status">${alertBadge(r.status)}</div>
+      <div class="rule-main"><div><b>${esc(r.name)}</b>${r.severity === "error" ? ` <span class="badge outline">error</span>` : ""}</div><div class="muted small">${esc(ruleText(r, metrics))}</div>
+        ${r.targets.length ? `<div class="rule-now small">${r.targets.map((t) => `<div><span class="dot ${t.status === "firing" ? "bad" : "warn"}"></span> ${now(r, t)}</div>`).join("")}</div>` : ""}</div>
+      <div class="rule-actions"><label class="check" title="${r.enabled ? "Disable" : "Enable"}"><span class="switch"><input type="checkbox" data-action="toggleRule" data-id="${esc(r.id)}" ${r.enabled ? "checked" : ""} aria-label="Enabled"><span class="track"></span></span></label><button class="btn btn-sm btn-ghost btn-icon" data-action="editRule" data-id="${esc(r.id)}" title="Edit" aria-label="Edit">${icon("pencil")}</button><button class="btn btn-sm btn-danger-ghost btn-icon" data-action="delRule" data-id="${esc(r.id)}" title="Delete" aria-label="Delete">${icon("trash")}</button></div>
+    </div>`).join("")}
+    </div>` : emptyState("No alert rules. Add one to get notified about CPU, memory, disk space or log messages.", "bell")}</div></div>`;
 }
 
 function ruleDialog(existing, meta, names) {
@@ -179,32 +187,33 @@ async function renderOverview(page, el, live = () => true) {
   const firing = d.alerts.filter((a) => a.status === "firing");
   el.innerHTML = `${banner}
     ${firing.length ? `<div class="banner danger mb">${icon("bell")}<div><b>${firing.length} alert${firing.length === 1 ? "" : "s"} firing:</b> ${firing.map((a) => esc(a.name)).join(", ")}</div></div>` : ""}
-    <div class="grid cols-5 mb">
-      <div class="card stat"><div class="label">${icon("cpu", "sm")} CPU</div><div class="value ${level(hn?.cpu, 80, 95)}">${hn ? pct(hn.cpu) : "—"}</div><div class="sub">${hn && hn.load1 != null ? `load ${num(hn.load1, 2)} · ` : ""}${cores} cores · containers ${pct(cur.cpu / cores)}</div></div>
-      <div class="card stat"><div class="label">${icon("layers", "sm")} Memory</div><div class="value ${level(memPct, 85, 95)}">${memPct == null ? "—" : pct(memPct)}</div><div class="sub">${hn ? `${esc(fmtBytes(hn.mem_used))} of ${esc(fmtBytes(hn.mem_total))}` : ""}${hn && hn.swap_total ? ` · swap ${pct((hn.swap_used / hn.swap_total) * 100, 0)}` : ""}<br>containers ${esc(fmtBytes(cur.mem))}</div></div>
-      <div class="card stat"><div class="label">${icon("hard-drive", "sm")} Disk</div><div class="value ${level(worst?.pct, 80, 90)}">${worst ? pct(worst.pct, 0) : "—"}</div><div class="sub">${worst ? `${esc(worst.name)} · ${esc(fmtBytes(worst.free))} free` : "no data yet"}${soonest ? `<br><span class="${soonest.days_to_full < 7 ? "danger" : ""}">full in ~${Math.max(1, Math.round(soonest.days_to_full))} days</span>` : ""}</div></div>
-      <div class="card stat"><div class="label">${icon("globe", "sm")} Network${hostNet ? "" : " (containers)"}</div><div class="value">${esc(rate(netRx + netTx))}</div><div class="sub">↓ ${esc(rate(netRx))} · ↑ ${esc(rate(netTx))}${hn && hn.disk_r != null ? `<br>disk ${esc(rateShort(hn.disk_r))} r · ${esc(rateShort(hn.disk_w))} w /s` : ""}</div></div>
+    <div class="kpis mb">
+      <div class="card stat"><div class="label">${icon("cpu", "sm")} CPU</div><div class="value ${level(hn?.cpu, 80, 95)}">${hn ? pct(hn.cpu) : "—"}</div>${meter(hn?.cpu, 80, 95)}<div class="sub">${cores} cores${hn && hn.load1 != null ? ` · load ${num(hn.load1, 2)}` : ""}</div></div>
+      <div class="card stat"><div class="label">${icon("layers", "sm")} Memory</div><div class="value ${level(memPct, 85, 95)}">${memPct == null ? "—" : pct(memPct)}</div>${meter(memPct, 85, 95)}<div class="sub">${hn ? `${esc(fmtBytes(hn.mem_used))} of ${esc(fmtBytes(hn.mem_total))}` : "&nbsp;"}${hn && hn.swap_total ? `<span class="hide-sm"> · swap ${pct((hn.swap_used / hn.swap_total) * 100, 0)}</span>` : ""}</div></div>
+      <div class="card stat"><div class="label">${icon("hard-drive", "sm")} Disk</div><div class="value ${level(worst?.pct, 80, 90)}">${worst ? pct(worst.pct, 0) : "—"}</div>${meter(worst?.pct, 80, 90)}<div class="sub">${worst ? `${esc(fmtBytes(worst.free))} free` : "no data yet"}${soonest ? ` · <span class="${soonest.days_to_full < 7 ? "danger" : ""}">full in ~${Math.max(1, Math.round(soonest.days_to_full))} d</span>` : ""}</div></div>
+      <div class="card stat"><div class="label">${icon("globe", "sm")} Network${hostNet ? "" : `<span class="hide-sm">&nbsp;(containers)</span>`}</div><div class="value">${esc(rate(netRx + netTx))}</div><div class="sub">↓ ${esc(rate(netRx))} · ↑ ${esc(rate(netTx))}</div></div>
       ${hn && hn.temp != null
-        ? `<div class="card stat"><div class="label">${icon("zap", "sm")} Temperature</div><div class="value ${level(hn.temp, 75, 90)}">${Math.round(hn.temp)} °C</div><div class="sub">hottest sensor · ${cur.running} containers</div></div>`
-        : `<div class="card stat"><div class="label">${icon("container", "sm")} Containers</div><div class="value">${cur.running}</div><div class="sub">running and sampled</div></div>`}
+        ? `<div class="card stat"><div class="label">${icon("zap", "sm")} Temperature</div><div class="value ${level(hn.temp, 75, 90)}">${Math.round(hn.temp)} °C</div><div class="sub">hottest sensor</div></div>`
+        : ""}
+      <div class="card stat"><div class="label">${icon("container", "sm")} Containers</div><div class="value">${cur.running}</div><div class="sub">${firing.length ? `<span class="danger">${firing.length} alert${firing.length === 1 ? "" : "s"} firing</span>` : "running · no alerts"}</div></div>
     </div>
-    <div class="card mb"><div class="card-h"><h2>Host</h2><span class="muted small">${esc(h.name || "")}${h.os ? ` · ${esc(h.os)}` : ""}${d.last_collect ? ` · sampled ${esc(ago(d.last_collect))}` : ""}</span><div class="actions">${d.backups.length ? legendHtml([{ label: "Backup run", cls: "bk" }]) : ""}${rangeSeg()}</div></div>
+    <div class="card mb"><div class="card-h wrap"><h2>Host</h2><span class="muted small hide-sm">${esc(h.name || "")}${h.os ? ` · ${esc(h.os)}` : ""}${d.last_collect ? ` · sampled ${esc(ago(d.last_collect))}` : ""}</span><div class="actions">${d.backups.length ? legendHtml([{ label: "Backup run", cls: "bk" }]) : ""}${rangeSeg()}</div></div>
       <div class="card-c"><div class="grid cols-2">
-        ${[["cpu", "CPU"], ["mem", "Memory"], ["io", "Disk I/O"], ["net", hostNet ? "Network" : "Network (containers)"]].map(([k, t]) => `<div><div class="chart-h flex"><b>${t}</b><span class="grow"></span><span data-legend="${k}"></span></div><div data-chart="${k}"></div></div>`).join("")}
+        ${[["cpu", "CPU", `of ${cores} cores`], ["mem", "Memory", h.mem_total ? `of ${fmtBytes(h.mem_total)} RAM` : ""], ["io", "Disk I/O", ""], ["net", hostNet ? "Network" : "Network (containers)", ""]].map(([k, t, sub]) => `<div><div class="chart-h"><b>${t}</b>${sub ? `<span class="muted small">${esc(sub)}</span>` : ""}<span class="grow"></span><span data-legend="${k}"></span></div><div data-chart="${k}"></div></div>`).join("")}
       </div></div></div>
     ${disksCard(d.disks)}
     ${meta ? alertsCard(d.alerts, meta.metrics) : ""}
     <div class="card"><div class="card-h"><h2>Containers</h2><span class="muted small">click a row for its charts and logs</span></div>
       <div class="card-c tight">${rows.length ? `<div class="table-wrap"><table class="metrics-table"><thead><tr>${th("name", "Container")}${th("cpu", "CPU", "num")}${th("mem", "Memory")}${th("net", "Net ↓ / ↑", "num")}${th("blk", "Disk r / w", "num")}${th("pids", "PIDs", "num")}<th>CPU ${esc(range)}</th><th>Status</th></tr></thead><tbody>
         ${rows.map((c) => { const l = c.latest, lim = memLimitOf(c, h), mp = l && lim ? (l.mem / lim) * 100 : 0;
-          return `<tr class="clickable" tabindex="0" data-action="open" data-name="${esc(c.name)}">
+          return `<tr class="clickable ${l ? "" : "is-gone"}" tabindex="0" data-action="open" data-name="${esc(c.name)}" ${l ? "" : `title="Not running now; history only"`}>
             <td><b>${esc(c.name)}</b>${c.project ? `<div class="muted small">${esc(c.project)}${c.service && c.service !== c.name ? ` · ${esc(c.service)}` : ""}</div>` : ""}</td>
             <td class="num">${l ? pct(l.cpu) : "—"}</td>
             <td class="mem-cell">${l ? `<div class="flex small"><span>${esc(fmtBytes(l.mem))}</span><span class="muted">${l.mem_limited ? `/ ${esc(fmtBytes(l.mem_limit))}` : ""}</span></div><div class="mbar"><i class="${mp >= 90 ? "bad" : mp >= 75 ? "warn" : ""}" data-w="${mp.toFixed(1)}"></i></div>` : "—"}</td>
             <td class="num small">${l ? `${esc(rateShort(l.net_rx))} / ${esc(rateShort(l.net_tx))}` : "—"}</td>
             <td class="num small">${l ? `${esc(rateShort(l.blk_r))} / ${esc(rateShort(l.blk_w))}` : "—"}</td>
             <td class="num">${l ? l.pids : "—"}</td>
-            <td>${miniSpark(c.spark.map((p) => p[1]))}</td>
+            <td>${miniSpark(c.spark.map((p) => p[1]), { title: c.spark.length ? `CPU ${range}: peak ${pct(Math.max(...c.spark.map((p) => p[1])))}` : "" })}</td>
             <td>${stateBadge(c)}</td></tr>`; }).join("")}
         </tbody></table></div>` : emptyState(d.enabled ? "No samples yet. Running containers appear here after the first two sampling rounds." : "Metrics collection is off.", "cpu")}</div></div>
     ${settingsCard(d.settings, h)}`;
@@ -213,12 +222,13 @@ async function renderOverview(page, el, live = () => true) {
   const H = (k) => d.host_series.map((r) => [r.t, r[k]]);
   const T = (k, f = (v) => v) => d.totals.map((t) => [t.t, f(t[k])]);
   const charts = {
-    cpu: { fmt: pctFmt, minMax: 1, max: 100, series: [{ label: "Host", cls: "s1", area: true, points: H("cpu") }, ...(range === "1h" || range === "24h" ? [] : [{ label: "Host peak", cls: "s1", dashed: true, points: H("cpu_max") }]), { label: "Containers", cls: "s2", dashed: true, points: T("cpu", (v) => v / cores) }] },
-    mem: { fmt: bytesAxis, minMax: 1024 ** 2, series: [{ label: "Host used", cls: "s1", area: true, points: H("mem_used") }, { label: "Containers", cls: "s2", dashed: true, points: T("mem") }] },
-    io: { fmt: (v) => rateShort(v), minMax: 1024, series: [{ label: "Read", cls: "s1", points: H("disk_r") }, { label: "Write", cls: "s3", dashed: true, points: H("disk_w") }] },
+    cpu: { fmt: pctFmt, tipFmt: (v) => pct(v), minMax: 1, max: 100, series: [{ label: "Host", cls: "s1", area: true, points: H("cpu") }, ...(range === "1h" || range === "24h" ? [] : [{ label: "Host peak", cls: "s1", dashed: true, points: H("cpu_max") }]), { label: "Containers", cls: "s2", dashed: true, points: T("cpu", (v) => v / cores) }] },
+    // scaled to the host's RAM (like CPU to 100 %), so the top line is the maximum available
+    mem: { fmt: (v) => fmtBytes(Math.round(v), 1), tipFmt: bytesTip, minMax: 1024 ** 2, max: h.mem_total || undefined, series: [{ label: "Host used", cls: "s1", area: true, points: H("mem_used") }, { label: "Containers", cls: "s2", dashed: true, points: T("mem") }] },
+    io: { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Read", cls: "s1", points: H("disk_r") }, { label: "Write", cls: "s3", dashed: true, points: H("disk_w") }] },
     net: hostNet
-      ? { fmt: (v) => rateShort(v), minMax: 1024, series: [{ label: "Received", cls: "s1", points: H("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: H("net_tx") }] }
-      : { fmt: (v) => rateShort(v), minMax: 1024, series: [{ label: "Received", cls: "s1", points: T("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: T("net_tx") }] },
+      ? { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Received", cls: "s1", points: H("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: H("net_tx") }] }
+      : { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Received", cls: "s1", points: T("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: T("net_tx") }] },
   };
   for (const [k, c] of Object.entries(charts)) {
     $(`[data-legend=${k}]`, el).innerHTML = legendHtml(c.series);
@@ -297,7 +307,7 @@ function startFollow(box) {
 }
 
 function logsCard(name) {
-  return `<div class="card mt" data-logs="${esc(name)}"><div class="card-h"><h2>${icon("terminal", "sm")} Logs</h2><span class="muted small" data-logcount></span>
+  return `<div class="card mt" data-logs="${esc(name)}"><div class="card-h wrap"><h2>${icon("terminal", "sm")} Logs</h2><span class="muted small" data-logcount></span>
       <div class="actions"><div class="search"><input type="search" data-logfilter placeholder="Filter, or /regex/" value="${esc(logState.filter)}" aria-label="Filter log lines"></div>
       ${switchHtml("problems", logState.problems, "Errors and warnings", 'data-logproblems')}${switchHtml("follow", logState.follow, "Follow", 'data-logfollow')}
       <a class="btn btn-sm" href="/api/logs/${encodeURIComponent(name)}?download=1&amp;tail=20000" download>${icon("download")} Download</a></div></div>
@@ -345,9 +355,9 @@ async function renderContainer(page, el, name, live = () => true) {
   const base = { since: d.since, now: d.now, bucket: d.bucket, marks: d.backups };
   top.innerHTML = `
     <div class="flex mb flex-wrap"><a class="btn btn-sm" href="#system">${icon("arrow-right", "sm flip")} All containers</a><h2 class="grow">${esc(d.name)}</h2>${stateBadge(d)}${d.image ? `<span class="tag">${esc(d.image)}</span>` : ""}${rangeSeg()}</div>
-    <div class="grid cols-4 mb">
+    <div class="kpis mb">
       <div class="card stat"><div class="label">${icon("cpu", "sm")} CPU</div><div class="value">${l ? pct(l.cpu) : "—"}</div><div class="sub">100% = one core · host has ${h.cpus || "?"}</div></div>
-      <div class="card stat"><div class="label">${icon("layers", "sm")} Memory</div><div class="value">${l ? esc(fmtBytes(l.mem)) : "—"}</div><div class="sub">${!l ? "" : limited ? `limit ${esc(fmtBytes(l.mem_limit))} · ${pct((l.mem / l.mem_limit) * 100)}` : "no limit set"}</div></div>
+      <div class="card stat"><div class="label">${icon("layers", "sm")} Memory</div><div class="value">${l ? esc(fmtBytes(l.mem)) : "—"}</div>${limited ? meter((l.mem / l.mem_limit) * 100, 85, 95) : ""}<div class="sub">${!l ? "" : limited ? `limit ${esc(fmtBytes(l.mem_limit))} · ${pct((l.mem / l.mem_limit) * 100)}` : "no limit set"}</div></div>
       <div class="card stat"><div class="label">${icon("globe", "sm")} Network</div><div class="value">${l ? esc(rate(l.net_rx + l.net_tx)) : "—"}</div><div class="sub">${l ? `↓ ${esc(rate(l.net_rx))} · ↑ ${esc(rate(l.net_tx))}` : d.state === "running" ? "waiting for the next sample" : "not running"}</div></div>
       <div class="card stat"><div class="label">${icon("activity", "sm")} Processes</div><div class="value">${l ? l.pids : "—"}</div><div class="sub">${l ? `disk ${esc(rateShort(l.blk_r))} r · ${esc(rateShort(l.blk_w))} w /s` : ""}</div></div>
     </div>
@@ -356,10 +366,10 @@ async function renderContainer(page, el, name, live = () => true) {
     </div>`;
   const P = (key) => s.map((r) => [r.t, r[key]]);
   const charts = {
-    cpu: { fmt: pctFmt, minMax: 1, series: [{ label: "Average", cls: "s1", area: true, points: P("cpu") }, { label: "Peak", cls: "s1", dashed: true, points: P("cpu_max") }] },
-    mem: { fmt: bytesAxis, minMax: 1024 ** 2, series: [{ label: "Average", cls: "s2", area: true, points: P("mem") }, { label: "Peak", cls: "s2", dashed: true, points: P("mem_max") }, ...(limit ? [{ label: "Limit", cls: "lim", dashed: true, points: s.map((r) => [r.t, r.mem_limit]) }] : [])] },
-    net: { fmt: (v) => rateShort(v), minMax: 1024, series: [{ label: "Received", cls: "s1", points: P("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: P("net_tx") }] },
-    blk: { fmt: (v) => rateShort(v), minMax: 1024, series: [{ label: "Read", cls: "s1", points: P("blk_r") }, { label: "Write", cls: "s3", dashed: true, points: P("blk_w") }] },
+    cpu: { fmt: pctFmt, tipFmt: (v) => pct(v), minMax: 1, series: [{ label: "Average", cls: "s1", area: true, points: P("cpu") }, { label: "Peak", cls: "s1", dashed: true, points: P("cpu_max") }] },
+    mem: { fmt: bytesAxis, tipFmt: bytesTip, binary: true, minMax: 1024 ** 2, series: [{ label: "Average", cls: "s2", area: true, points: P("mem") }, { label: "Peak", cls: "s2", dashed: true, points: P("mem_max") }, ...(limit ? [{ label: "Limit", cls: "lim", dashed: true, points: s.map((r) => [r.t, r.mem_limit]) }] : [])] },
+    net: { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Received", cls: "s1", points: P("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: P("net_tx") }] },
+    blk: { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Read", cls: "s1", points: P("blk_r") }, { label: "Write", cls: "s3", dashed: true, points: P("blk_w") }] },
   };
   for (const [k, c] of Object.entries(charts)) {
     $(`[data-legend=${k}]`, top).innerHTML = legendHtml(d.backups.length ? [...c.series, { label: "Backup run", cls: "bk" }] : c.series);

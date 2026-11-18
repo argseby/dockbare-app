@@ -693,7 +693,8 @@ html[data-theme="dark"] .s2 { --c: #f08254; } html[data-theme="dark"] .s3 { --c:
 .chart .ln { stroke: var(--c); } .chart .ar { fill: var(--c); } .chart .pt { fill: var(--c); }
 .chart-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 6px 9px; font-size: 12px; white-space: nowrap; }
 .chart-tip b { font-weight: 600; margin-left: 4px; }
-.chart-h { margin-bottom: 6px; font-size: 13px; }
+.chart-h { margin-bottom: 6px; font-size: 13px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.chart-h .chart-legend { margin-left: auto; }
 .chart-legend { display: inline-flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
 .chart-legend > span, .chart-tip div { display: inline-flex; align-items: center; gap: 5px; }
 .chart-tip div { display: flex; }
@@ -730,3 +731,32 @@ html[data-theme="dark"] .logview .ll.error { color: var(--danger-text); }
 [data-logs] .card-h { flex-wrap: wrap; }
 [data-logs] .card-h h2 { white-space: nowrap; }
 [data-logs] [data-logcount] { white-space: nowrap; }
+
+/* system page: KPI cards with meters, alert list, phone layout */
+.kpis { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.meter { height: 4px; border-radius: 3px; background: var(--surface-3); margin: 8px 0 2px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--primary); }
+.meter i.warn { background: var(--warning); } .meter i.bad { background: var(--danger); }
+.card-h.wrap { flex-wrap: wrap; }
+.chart svg { touch-action: pan-y; }
+.chart .grid-l.base { stroke: var(--border-strong); }
+.chart .hov { fill: var(--c); stroke: var(--surface); stroke-width: 2; pointer-events: none; }
+.rule-list { display: flex; flex-direction: column; }
+.rule-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--border); }
+.rule-row:last-child { border-bottom: 0; }
+.rule-row.is-off .rule-main { color: var(--muted); }
+.rule-now { margin-top: 4px; display: grid; gap: 2px; }
+.rule-actions { display: flex; align-items: center; gap: 2px; }
+@media (max-width: 640px) {
+  .hide-sm { display: none !important; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpis .stat { padding: 11px 12px; }
+  .kpis .stat .value { font-size: 20px; }
+  .kpis > .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .rule-row { grid-template-columns: auto minmax(0, 1fr); padding: 11px 12px; }
+  .rule-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: -4px; }
+  [data-logs] .search input { width: 100%; }
+  [data-logs] .card-h .actions { margin-left: 0; width: 100%; }
+}
+.metrics-table tr.is-gone td { color: var(--muted); }
+.metrics-table tr.is-gone td b { font-weight: 500; }
