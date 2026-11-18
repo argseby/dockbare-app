@@ -418,3 +418,35 @@ def test_restart_does_not_resolve_firing_alerts(metrics_app, monkeypatch):
     assert "Hot" not in {r["name"] for r in al.firing()}
     assert sent[-1][1] == "RESOLVED: Hot (web)" and "no longer reported" in sent[-1][2]
     assert rule["id"] and host_rule["id"]
+
+
+def test_restart_shows_last_values_at_once(metrics_app):
+    """After a restart the current values come from the database until two new readings exist."""
+    from dockbare.metrics import Metrics
+    from tests.test_metrics import FakeReader
+
+    app, c, d = metrics_app
+    core = app.extensions["dockbare"]
+    now = time.time()
+    core.metrics.collect(now=now - 60)
+    core.metrics.collect(now=now - 30)
+    m2 = Metrics(core.manager, reader=FakeReader())      # a fresh process: nothing in memory
+    assert m2.host_now is None and not m2.latest
+    m2.start(background=False)
+    assert m2.host_now["cpu"] == pytest.approx(25.0) and m2.last_collect == pytest.approx(now - 30)
+    assert m2.latest["web"]["cpu"] == pytest.approx(200.0) and m2.latest["web"]["id"] is None
+    core.manager.metrics = m2
+    m2.collect(now=now)                                   # first live round has no rates yet
+    assert m2.latest["web"]["cpu"] == pytest.approx(200.0)
+    o = m2.overview("1h", now=now)
+    assert o["host_now"] and {x["name"] for x in o["containers"] if x["latest"]} == {"web", "db"}
+    # stopped while Dockbare was down: dropped at the first live round
+    m3 = Metrics(core.manager, reader=FakeReader())
+    m3.start(background=False)
+    d.containers["db"]["state"] = "exited"
+    m3.collect(now=now + 30)
+    assert "db" not in m3.latest and "web" in m3.latest
+    # old readings are not restored
+    m4 = Metrics(core.manager, reader=FakeReader())
+    m4.restore(now=now + 3600)
+    assert m4.host_now is None and not m4.latest

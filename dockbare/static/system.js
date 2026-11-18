@@ -3,6 +3,8 @@ import { $, $$, esc, icon, api, toast, modal, confirmDialog, fmtBytes, ago, bind
 import { lineChart, legendHtml, miniSpark } from "./charts.js";
 
 const RANGES = ["1h", "24h", "7d", "30d", "90d"];
+const HOST_VS_CONTAINERS = "Whole system: everything running on the machine (your containers, Docker itself, the operating system and anything installed outside Docker). "
+  + "Your containers: the sum of all running containers. The gap between the two lines is what runs outside your containers.";
 const store = {
   get(k, d) { try { return localStorage.getItem(`dockbare.system.${k}`) || d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`dockbare.system.${k}`, v); } catch { /* private mode */ } },
@@ -199,7 +201,7 @@ async function renderOverview(page, el, live = () => true) {
     </div>
     <div class="card mb"><div class="card-h wrap"><h2>Host</h2><span class="muted small hide-sm">${esc(h.name || "")}${h.os ? ` · ${esc(h.os)}` : ""}${d.last_collect ? ` · sampled ${esc(ago(d.last_collect))}` : ""}</span><div class="actions">${d.backups.length ? legendHtml([{ label: "Backup run", cls: "bk" }]) : ""}${rangeSeg()}</div></div>
       <div class="card-c"><div class="grid cols-2">
-        ${[["cpu", "CPU", `of ${cores} cores`], ["mem", "Memory", h.mem_total ? `of ${fmtBytes(h.mem_total)} RAM` : ""], ["io", "Disk I/O", ""], ["net", hostNet ? "Network" : "Network (containers)", ""]].map(([k, t, sub]) => `<div><div class="chart-h"><b>${t}</b>${sub ? `<span class="muted small">${esc(sub)}</span>` : ""}<span class="grow"></span><span data-legend="${k}"></span></div><div data-chart="${k}"></div></div>`).join("")}
+        ${[["cpu", "CPU", `of ${cores} cores`], ["mem", "Memory", h.mem_total ? `of ${fmtBytes(h.mem_total)} RAM` : ""], ["io", "Disk I/O", ""], ["net", hostNet ? "Network" : "Network (containers)", ""]].map(([k, t, sub]) => `<div><div class="chart-h"><b>${t}</b>${sub ? `<span class="muted small">${esc(sub)}</span>` : ""}${k === "cpu" || k === "mem" ? `<span class="chart-hint" tabindex="0" title="${esc(HOST_VS_CONTAINERS)}" aria-label="${esc(HOST_VS_CONTAINERS)}">${icon("info", "sm")}</span>` : ""}<span class="grow"></span><span data-legend="${k}"></span></div><div data-chart="${k}"></div></div>`).join("")}
       </div></div></div>
     ${disksCard(d.disks)}
     ${meta ? alertsCard(d.alerts, meta.metrics) : ""}
@@ -222,9 +224,9 @@ async function renderOverview(page, el, live = () => true) {
   const H = (k) => d.host_series.map((r) => [r.t, r[k]]);
   const T = (k, f = (v) => v) => d.totals.map((t) => [t.t, f(t[k])]);
   const charts = {
-    cpu: { fmt: pctFmt, tipFmt: (v) => pct(v), minMax: 1, max: 100, series: [{ label: "Host", cls: "s1", area: true, points: H("cpu") }, ...(range === "1h" || range === "24h" ? [] : [{ label: "Host peak", cls: "s1", dashed: true, points: H("cpu_max") }]), { label: "Containers", cls: "s2", dashed: true, points: T("cpu", (v) => v / cores) }] },
+    cpu: { fmt: pctFmt, tipFmt: (v) => pct(v), minMax: 1, max: 100, series: [{ label: "Whole system", cls: "s1", area: true, points: H("cpu") }, ...(range === "1h" || range === "24h" ? [] : [{ label: "Whole system (peak)", cls: "s1", dashed: true, points: H("cpu_max") }]), { label: "Your containers", cls: "s2", dashed: true, points: T("cpu", (v) => v / cores) }] },
     // scaled to the host's RAM (like CPU to 100 %), so the top line is the maximum available
-    mem: { fmt: (v) => fmtBytes(Math.round(v), 1), tipFmt: bytesTip, minMax: 1024 ** 2, max: h.mem_total || undefined, series: [{ label: "Host used", cls: "s1", area: true, points: H("mem_used") }, { label: "Containers", cls: "s2", dashed: true, points: T("mem") }] },
+    mem: { fmt: (v) => fmtBytes(Math.round(v), 1), tipFmt: bytesTip, minMax: 1024 ** 2, max: h.mem_total || undefined, series: [{ label: "Whole system", cls: "s1", area: true, points: H("mem_used") }, { label: "Your containers", cls: "s2", dashed: true, points: T("mem") }] },
     io: { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Read", cls: "s1", points: H("disk_r") }, { label: "Write", cls: "s3", dashed: true, points: H("disk_w") }] },
     net: hostNet
       ? { fmt: rateAxis, tipFmt: rate, binary: true, minMax: 1024, series: [{ label: "Received", cls: "s1", points: H("net_rx") }, { label: "Sent", cls: "s3", dashed: true, points: H("net_tx") }] }

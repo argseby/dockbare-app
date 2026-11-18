@@ -134,7 +134,35 @@ class Metrics:
         return s
 
     # --------------------------------------------------------------- loop
+    def restore(self, now: float | None = None) -> None:
+        """Load the last stored readings, so the page shows values right after a restart.
+
+        Rates need two readings, so without this the current values stay empty for one
+        sampling interval after every restart (the history is in the database either way).
+        Only readings from the last few intervals are used; live samples replace them.
+        """
+        now = now if now is not None else time.time()
+        since = now - max(600, 3 * self.settings()["interval_seconds"])
+        db = self.m.db
+        h = db.one("SELECT * FROM host_samples WHERE res = 0 AND ts >= ? ORDER BY ts DESC LIMIT 1", (since,))
+        if h and self.host_now is None:
+            self.host_now = {k: h[k] for k in ("ts", "cpu", "load1", "mem_used", "mem_total", "swap_used", "swap_total",
+                                               "disk_r", "disk_w", "net_rx", "net_tx", "temp")}
+        rows = db.query("SELECT c.* FROM container_samples c JOIN (SELECT name, MAX(ts) AS ts FROM container_samples "
+                        "WHERE res = 0 AND ts >= ? GROUP BY name) l ON c.name = l.name AND c.ts = l.ts WHERE c.res = 0", (since,))
+        for r in rows:
+            if r["name"] not in self.latest:
+                self.latest[r["name"]] = {k: r[k] for k in ("ts", "cpu", "mem", "mem_limit", "net_rx", "net_tx", "blk_r", "blk_w", "pids")} | {
+                    "id": None, "project": None, "service": None, "image": None}
+        last = max([r["ts"] for r in rows] + ([h["ts"]] if h else []), default=None)
+        if last and self.last_collect is None:
+            self.last_collect = last
+
     def start(self, background: bool = True) -> None:
+        try:
+            self.restore()
+        except Exception:  # noqa: BLE001
+            log.exception("Restoring the last metrics failed")
         if not background:
             return
         self._thread = threading.Thread(target=self._loop, name="dockbare-metrics", daemon=True)
@@ -225,7 +253,7 @@ class Metrics:
             sample = rates(prev, raw, now - prev["ts"]) if prev else None
             if sample is None:
                 old = self.latest.get(name)
-                if old and old.get("id") == c["id"]:
+                if old and old.get("id") in (None, c["id"]):  # None: restored from the database after a restart
                     latest[name] = {**old, **meta}  # keep showing the last value during a skipped cycle
                 continue
             latest[name] = {**sample, **meta, "ts": now}

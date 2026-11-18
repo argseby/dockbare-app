@@ -760,3 +760,5 @@ html[data-theme="dark"] .logview .ll.error { color: var(--danger-text); }
 }
 .metrics-table tr.is-gone td { color: var(--muted); }
 .metrics-table tr.is-gone td b { font-weight: 500; }
+.chart-hint { color: var(--muted); display: inline-flex; cursor: help; align-self: center; }
+.chart-hint:hover, .chart-hint:focus { color: var(--text); outline: none; }
