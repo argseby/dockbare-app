@@ -172,6 +172,68 @@ CREATE TABLE IF NOT EXISTS storage_samples (
     backup_count INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_storage_ts ON storage_samples(ts);
+-- Resource metrics. res = 0 for raw samples, 300 / 3600 for 5-minute / hourly rollups
+-- (averages, plus *_max peaks). Raw rows have *_max equal to the value.
+CREATE TABLE IF NOT EXISTS container_samples (
+    res INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    name TEXT NOT NULL,
+    cpu REAL NOT NULL,
+    cpu_max REAL NOT NULL,
+    mem REAL NOT NULL,
+    mem_max REAL NOT NULL,
+    mem_limit INTEGER NOT NULL,
+    net_rx REAL NOT NULL,
+    net_tx REAL NOT NULL,
+    blk_r REAL NOT NULL,
+    blk_w REAL NOT NULL,
+    pids INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_csamples_res_name_ts ON container_samples(res, name, ts);
+CREATE INDEX IF NOT EXISTS idx_csamples_res_ts ON container_samples(res, ts);
+CREATE TABLE IF NOT EXISTS host_samples (
+    res INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    cpu REAL NOT NULL,
+    cpu_max REAL NOT NULL,
+    load1 REAL,
+    mem_used REAL NOT NULL,
+    mem_max REAL NOT NULL,
+    mem_total INTEGER NOT NULL,
+    swap_used REAL,
+    swap_total INTEGER,
+    disk_r REAL,
+    disk_w REAL,
+    net_rx REAL,
+    net_tx REAL,
+    temp REAL,
+    temp_max REAL
+);
+CREATE INDEX IF NOT EXISTS idx_hsamples_res_ts ON host_samples(res, ts);
+CREATE TABLE IF NOT EXISTS disk_samples (
+    res INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    mount TEXT NOT NULL,
+    used REAL NOT NULL,
+    total INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dsamples_res_mount_ts ON disk_samples(res, mount, ts);
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id TEXT PRIMARY KEY,
+    config TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alert_state (
+    rule_id TEXT NOT NULL,
+    target TEXT NOT NULL,
+    status TEXT NOT NULL,
+    since REAL NOT NULL,
+    value REAL,
+    notified_at REAL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (rule_id, target)
+);
 """
 
 
@@ -186,8 +248,16 @@ class Database:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
+            self._pre_migrate()
             self._conn.executescript(SCHEMA)
             self._migrate()
+
+    def _pre_migrate(self) -> None:
+        """Changes that must happen before SCHEMA runs (its indexes reference new columns)."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(container_samples)")}
+        if cols and "res" not in cols:
+            # first metrics version (24 h of raw samples only): start over with the rollup layout
+            self._conn.execute("DROP TABLE container_samples")
 
     def _migrate(self) -> None:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(incidents)")}

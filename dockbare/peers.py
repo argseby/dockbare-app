@@ -94,6 +94,12 @@ class Peers:
             problems.append("Containers down: " + ", ".join(uptime["down"]))
         if uptime and uptime.get("checks_down"):
             problems.append("Checks down: " + ", ".join(uptime["checks_down"]))
+        mt = getattr(m, "metrics", None)
+        metrics = None
+        if mt and mt.settings()["enabled"]:
+            metrics = {**mt.summary(), "public": mt.settings()["public_host"]}
+            if metrics["alerts_firing"]:
+                problems.append("Alerts firing: " + ", ".join(metrics["alerts_firing"]))
         return {
             "ok": True, "app": "dockbare", "version": __version__, "hostname": m.hostname, "time": now,
             "uptime": now - m.started_at, "docker_ok": docker_ok,
@@ -102,6 +108,7 @@ class Peers:
             "failed_24h": int(failed), "upload_failed_24h": int(upload_failed), "remotes": remotes,
             "encryption": m.keyring.available, "disk": disk,
             "active_tasks": len(m.tasks.list(active_only=True)), "problems": problems, "uptime": uptime,
+            "metrics": metrics,
         }
 
     # --------------------------------------------------------------- crud

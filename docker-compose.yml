@@ -23,6 +23,8 @@ services:
       - ${DOCKBARE_BACKUPS_PATH:-dockbare_backups}:/backups
       - ${DOCKBARE_DATA_PATH:-dockbare_data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: the host's /proc adds host-wide network traffic to System (everything else works without it).
+      # - /proc:/host/proc:ro
     environment:
       - TZ=${TZ:-UTC}
     networks:

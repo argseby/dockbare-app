@@ -89,6 +89,8 @@ class Settings:
     env_file_vars: dict = field(default_factory=dict)
     env_peers: list = field(default_factory=list)
     testing: bool = False
+    host_proc: str = "/proc"
+    host_disks: list = field(default_factory=list)
 
     # --- derived -----------------------------------------------------------
     @property
@@ -242,7 +244,7 @@ KNOWN_VARS = [
     ("BEHIND_PROXY", "false"), ("SECURE_COOKIES", "auto"), ("LISTEN", "0.0.0.0"), ("PORT", "5000"),
     ("SESSION_IDLE_MINUTES", "720"), ("SESSION_MAX_HOURS", "168"), ("LOGIN_MAX_ATTEMPTS", "5"), ("LOGIN_WINDOW_MINUTES", "15"),
     ("HELPER_IMAGE", "(own image)"), ("DATA_DIR", "/data"), ("BACKUP_DIR", "/backups"), ("LOG_DIR", "<data>/logs"),
-    ("TIMEZONE", "TZ or UTC"), ("LOG_LEVEL", "INFO"),
+    ("TIMEZONE", "TZ or UTC"), ("LOG_LEVEL", "INFO"), ("HOST_PROC", "/host/proc if mounted, else /proc"), ("HOST_DISKS", "(none)"),
 ]
 SECRET_MARKERS = ("PASSWORD", "SECRET", "KEY", "TOKEN", "PASSPHRASE")
 
@@ -361,4 +363,8 @@ def load_settings() -> Settings:
         env_file_vars=env_file_vars,
         env_peers=_peers_from_env(),
         testing=_env_bool("TESTING", False),
+        # Host metrics: /proc is mostly host-wide even inside a container; mounting the host's /proc
+        # at /host/proc adds the host network counters. Extra paths add filesystems to the disk view.
+        host_proc=_env("HOST_PROC") or ("/host/proc" if Path("/host/proc/stat").exists() else "/proc"),
+        host_disks=[p.strip() for p in (_env("HOST_DISKS") or "").split(",") if p.strip()],
     )

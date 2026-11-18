@@ -76,6 +76,8 @@ class Manager:
         self.started_at = time.time()
         self.peers = None  # set by app wiring
         self.uptime = None  # set by app wiring
+        self.metrics = None  # set by app wiring
+        self.alerts = None  # set by app wiring
         self.configsync = None  # set by app wiring
 
     # ------------------------------------------------------------------ start

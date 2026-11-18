@@ -164,14 +164,27 @@ class Reports:
             "peers": peers,
             "problems": [e for e in events if e["level"] == "error"][-25:],
             "encryption": {"configured": self.m.keyring.available, "encrypted_backups": sum(1 for b in backups_now if b["encrypted"])},
+            "resources": self._resources(start, end),
         }
         stats["has_problems"] = bool(stats["backups_failed"] or stats["uploads_failed"] or stats["verify_failed"] or stale or stats["remote_down"]
                                      or any(r["enabled"] and r["ok"] is False for r in stats["remotes"])
-                                     or any(p["enabled"] and (p["alert_active"] or p["ok"] is False) for p in peers))
+                                     or any(p["enabled"] and (p["alert_active"] or p["ok"] is False) for p in peers)
+                                     or bool(stats["resources"] and (stats["resources"]["alerts_fired"]
+                                             or any((d.get("days_to_full") or 1e9) < 7 for d in stats["resources"]["disks"]))))
         subject = f"{period.capitalize()} backup report — {stats['backups_created']} backups, {stats['backups_failed']} failed, {fmt_bytes(total_now)} stored"
         if stats["has_problems"]:
             subject = "⚠ " + subject
         return {"subject": subject, "text": _render_text(stats, self.m.hostname), "html": _render_html(stats, self.m.hostname), "stats": stats}
+
+    def _resources(self, start: float, end: float) -> dict | None:
+        mt = getattr(self.m, "metrics", None)
+        if not mt or not mt.settings()["enabled"]:
+            return None
+        try:
+            return mt.report(start, end)
+        except Exception:  # noqa: BLE001
+            log.exception("Resource section of the report failed")
+            return None
 
     # ------------------------------------------------------------------- send
     def send(self, period: str, scheduled: bool = False, channels: list[str] | None = None) -> dict:
@@ -257,6 +270,7 @@ def _render_text(s: dict, host: str) -> str:
     for pv in s["per_volume"]:
         lines.append(f"  {pv['volume']}: {pv['created']} new ({fmt_bytes(pv['created_bytes'])}), {pv['failed']} failed, "
                      f"{pv['backups_total']} total ({fmt_bytes(pv['bytes_total'])}), last {_fmt_ts(pv['last_backup'])}")
+    lines += _resources_text(s.get("resources"))
     if s["problems"]:
         lines += ["", "Problems:"]
         for e in s["problems"]:
@@ -292,5 +306,60 @@ def _render_html(s: dict, host: str) -> str:
 <h3 style="font-size:15px;margin:18px 0 6px">Per volume</h3>
 <table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="background:#f3f4f6"><th align=left>Volume</th><th>New</th><th>New size</th><th>Failed</th><th>Total</th><th>Total size</th><th align=left>Last backup</th></tr></thead>
 <tbody>{rows or '<tr><td colspan=7>No backups</td></tr>'}</tbody></table>
+{_resources_html(s.get("resources"))}
 {('<h3 style="font-size:15px;margin:18px 0 6px">Problems</h3><ul style="font-size:13px">' + problems + '</ul>') if problems else ''}
 <p style="color:#9ca3af;font-size:11px;margin-top:24px">Sent by Dockbare</p></body></html>"""
+
+
+def _disk_line(d: dict) -> str:
+    fc = ""
+    if d.get("days_to_full") is not None:
+        fc = f", full in ~{d['days_to_full']:.0f} days"
+    elif d.get("growth_per_day") is not None:
+        fc = ", not growing" if d["growth_per_day"] <= 0 else ""
+    grow = f", {'+' if (d.get('growth_per_day') or 0) >= 0 else '-'}{fmt_bytes(abs(d['growth_per_day']))}/day" if d.get("growth_per_day") else ""
+    return f"{d['name']}: {d.get('pct') or 0:.0f}% used ({fmt_bytes(d['used'])} of {fmt_bytes(d['total'])}){grow}{fc}"
+
+
+def _resources_text(r: dict | None) -> list[str]:
+    if not r:
+        return []
+    lines = ["", "Resources:"]
+    h = r.get("host")
+    if h:
+        lines.append(f"  Host CPU:    {h['cpu']:.0f}% average, {h['cpu_max']:.0f}% peak")
+        lines.append(f"  Host memory: {h['mem']:.0f}% average, {h['mem_max']:.0f}% peak" + (f"   Temperature peak: {h['temp_max']:.0f} °C" if h.get("temp_max") else ""))
+    for d in r.get("disks") or []:
+        lines.append("  Disk " + _disk_line(d))
+    if r.get("top_cpu"):
+        lines.append("  Top CPU:     " + ", ".join(f"{c['name']} {c['cpu']:.0f}% (peak {c['cpu_max']:.0f}%)" for c in r["top_cpu"]))
+    if r.get("top_mem"):
+        lines.append("  Top memory:  " + ", ".join(f"{c['name']} {fmt_bytes(c['mem'])} (peak {fmt_bytes(c['mem_max'])})" for c in r["top_mem"]))
+    lines.append(f"  Alerts fired: {r.get('alerts_fired', 0)}")
+    for a in r.get("alerts") or []:
+        lines.append(f"    {_fmt_ts(a['ts'])} {a['message']}")
+    return lines
+
+
+def _resources_html(r: dict | None) -> str:
+    if not r:
+        return ""
+    h = html.escape
+    host = r.get("host")
+    rows = []
+    if host:
+        rows.append(f"<b>Host CPU:</b> {host['cpu']:.0f}% average, {host['cpu_max']:.0f}% peak<br>"
+                    f"<b>Host memory:</b> {host['mem']:.0f}% average, {host['mem_max']:.0f}% peak"
+                    + (f"<br><b>Temperature peak:</b> {host['temp_max']:.0f} °C" if host.get("temp_max") else ""))
+    for d in r.get("disks") or []:
+        warn = (d.get("days_to_full") or 1e9) < 7 or (d.get("pct") or 0) >= 90
+        rows.append(f"<b>Disk</b> <span style='color:{'#b91c1c' if warn else 'inherit'}'>{h(_disk_line(d))}</span>")
+    if r.get("top_cpu"):
+        rows.append("<b>Top CPU:</b> " + h(", ".join(f"{c['name']} {c['cpu']:.0f}% (peak {c['cpu_max']:.0f}%)" for c in r["top_cpu"])))
+    if r.get("top_mem"):
+        rows.append("<b>Top memory:</b> " + h(", ".join(f"{c['name']} {fmt_bytes(c['mem'])} (peak {fmt_bytes(c['mem_max'])})" for c in r["top_mem"])))
+    n = r.get("alerts_fired", 0)
+    rows.append(f"<b>Alerts fired:</b> <span style='color:{'#b91c1c' if n else 'inherit'}'>{n}</span>")
+    alerts = "".join(f"<li>{h(_fmt_ts(a['ts']))} — {h(a['message'])}</li>" for a in r.get("alerts") or [])
+    return ('<h3 style="font-size:15px;margin:18px 0 6px">Resources</h3><p style="font-size:13px">' + "<br>".join(rows) + "</p>"
+            + (f'<ul style="font-size:13px">{alerts}</ul>' if alerts else ""))

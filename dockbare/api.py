@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from functools import wraps
 
@@ -564,6 +565,75 @@ def regenerate_peer_token():
     return jsonify({"token": core().peers.regenerate_token()})
 
 
+# ------------------------------------------------------------------- metrics
+@api.get("/metrics")
+def metrics_overview():
+    return jsonify(core().metrics.overview(request.args.get("range", "1h")))
+
+
+@api.get("/metrics/containers/<name>")
+def metrics_container(name):
+    data = core().metrics.container(name, request.args.get("range", "1h"))
+    if data is None:
+        return err("No metrics for this container.", 404)
+    return jsonify(data)
+
+
+@api.put("/metrics/settings")
+def metrics_settings():
+    return jsonify(core().metrics.save_settings(body()))
+
+
+# -------------------------------------------------------------------- alerts
+@api.get("/alerts")
+def alerts_list():
+    return jsonify(core().alerts.payload())
+
+
+@api.post("/alerts")
+def alerts_add():
+    return jsonify(core().alerts.save(body()))
+
+
+@api.put("/alerts/<rid>")
+def alerts_update(rid):
+    return jsonify(core().alerts.save(body(), rid))
+
+
+@api.delete("/alerts/<rid>")
+def alerts_delete(rid):
+    core().alerts.delete(rid)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------- logs
+LOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
+
+
+@api.get("/logs/<name>")
+def container_logs(name):
+    """Recent log lines of a container. ``since`` (unix ts) returns only newer lines; ``download=1`` a text file."""
+    if not LOG_NAME_RE.match(name):
+        return err("Invalid container name.", 400)
+    c = core()
+    download = request.args.get("download") == "1"
+    try:
+        tail = max(1, min(20000 if download else 5000, int(request.args.get("tail", 500))))
+        since = float(request.args["since"]) if request.args.get("since") else None
+    except ValueError:
+        return err("tail and since must be numbers.", 400)
+    lines = c.docker.container_logs(name, tail=tail, since=since)
+    if since:
+        lines = [ln for ln in lines if ln[0] > since]
+    if download:
+        import datetime as _dt
+
+        text = "\n".join(f"{_dt.datetime.fromtimestamp(ts, _dt.timezone.utc).isoformat()} {t}" for ts, t in lines) + "\n"
+        c.manager.event("info", "logs.downloaded", f"Logs of '{name}' downloaded ({len(lines)} lines)")
+        return Response(text, mimetype="text/plain", headers={"Content-Disposition": f'attachment; filename="{name}-logs.txt"', "Cache-Control": "no-store"})
+    return jsonify({"name": name, "lines": [[ts, t] for ts, t in lines], "last_ts": lines[-1][0] if lines else since})
+
+
 # -------------------------------------------------------------------- uptime
 @api.get("/uptime/public")
 def uptime_public():
@@ -578,7 +648,10 @@ def uptime():
     c = core()
     from .uptime import CHECK_DEFAULTS, MONITOR_DEFAULTS, SERVICE_DEFAULTS
 
-    return jsonify({"containers": c.uptime.rows(), "incidents": c.uptime.incidents(limit=100), "settings": c.uptime.settings(),
+    incidents = c.uptime.incidents(limit=100)
+    for i in incidents[40:]:  # the page shows open ones and the 30 latest; keep the payload small
+        i["facts"].pop("logs", None)
+    return jsonify({"containers": c.uptime.rows(), "incidents": incidents, "settings": c.uptime.settings(),
                     "summary": c.uptime.summary(), "announcements": c.uptime.announcements(limit=50),
                     "checks": c.uptime.check_rows(), "services": c.uptime.services(),
                     "defaults": MONITOR_DEFAULTS, "check_defaults": CHECK_DEFAULTS, "service_defaults": SERVICE_DEFAULTS})
@@ -763,6 +836,8 @@ def totp_qr():
     sec = c.auth.totp_secret()
     if not sec:
         return err("TOTP is not configured.", 404)
+    if c.auth.totp_error:
+        return err(c.auth.totp_error, 409)
     uri = pyotp.TOTP(sec).provisioning_uri(name=c.settings.admin_user, issuer_name="Dockbare")
     c.manager.event("warning", "auth.totp_qr", "TOTP QR code displayed")
     return Response(_qr_svg(uri), mimetype="image/svg+xml", headers={"Cache-Control": "no-store"})

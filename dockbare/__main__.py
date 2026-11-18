@@ -41,7 +41,13 @@ def cmd_hash_password(args) -> int:
 def cmd_totp_setup(args) -> int:
     import pyotp
 
-    secret = args.secret or pyotp.random_base32()
+    from .auth import totp_secret_problem
+
+    secret = (args.secret or pyotp.random_base32()).replace(" ", "").upper()
+    problem = totp_secret_problem(secret)
+    if problem:
+        print(f"The secret {problem}.", file=sys.stderr)
+        return 1
     uri = pyotp.TOTP(secret).provisioning_uri(name=args.user, issuer_name="Dockbare")
     print("1. Add this to your .env / stack environment and restart:\n")
     print(f"   DOCKBARE_TOTP_SECRET={secret}\n")

@@ -4,6 +4,10 @@ import time
 
 from tests.conftest import make_tar, wait_task
 
+# 32 base32 chars = 160 bits, the length pyotp.random_base32() produces.
+# pyotp >= 2.10 rejects secrets under 112 bits (e.g. the classic 16-char "JBSWY3DPEHPK3PXP").
+TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
 
 def test_requires_auth(client):
     assert client.get("/api/overview").status_code == 401
@@ -224,7 +228,7 @@ def test_notification_settings_from_env(settings, fake_docker, monkeypatch):
 
 def test_totp_qr_endpoint(auth_client, app):
     assert auth_client.get("/api/security/totp-qr").status_code == 404
-    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    app.extensions["dockbare"].settings.totp_secret = TOTP_SECRET
     r = auth_client.get("/api/security/totp-qr")
     assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"<svg" in r.data
     assert app.test_client().get("/api/security/totp-qr").status_code == 401
@@ -271,7 +275,7 @@ def test_totp_gui_enable_login_recovery_disable(auth_client, app):
 
 
 def test_totp_env_locks_gui(auth_client, app):
-    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    app.extensions["dockbare"].settings.totp_secret = TOTP_SECRET
     assert auth_client.get("/api/security").get_json()["totp"]["source"] == "env"
     assert auth_client.post("/api/security/totp/setup").status_code == 400
     assert auth_client.post("/api/security/totp/disable", json={"password": "test-password-1234", "code": "x"}).status_code == 400
@@ -336,3 +340,45 @@ def test_root_is_status_page(auth_client, app):
         r = anon.get(path)
         assert r.status_code == 200 and b"uptime.js" in r.data
     assert b"login.js" in anon.get("/admin").data
+
+
+def test_totp_secret_problem():
+    from dockbare.auth import totp_secret_problem
+
+    assert totp_secret_problem(None) is None
+    assert totp_secret_problem(TOTP_SECRET) is None
+    assert totp_secret_problem("jbsw y3dp ehpk 3pxp jbsw y3dp ehpk 3pxp") is None  # spaces and lower case are fine
+    assert "too short (80 bits" in totp_secret_problem("JBSWY3DPEHPK3PXP")
+    assert "base32" in totp_secret_problem("not-base32-1890!")
+
+
+def test_short_totp_secret_blocks_login_with_reason(client, app):
+    core = app.extensions["dockbare"]
+    core.settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    assert "DOCKBARE_TOTP_SECRET is too short" in core.auth.totp_error
+    # a wrong password still looks like any failed login
+    assert client.post("/api/auth/login", json={"username": "admin", "password": "wrong", "totp": "123456"}).status_code == 401
+    # the right password gets the reason, and it does not count towards the lockout (max 3 attempts in tests)
+    for _ in range(4):
+        r = client.post("/api/auth/login", json={"username": "admin", "password": "test-password-1234", "totp": "123456"})
+        assert r.status_code == 503 and "too short" in r.get_json()["error"]
+    assert core.auth.verify_code("123456") is None  # no exception from pyotp
+    core.settings.totp_secret = TOTP_SECRET
+    assert core.auth.totp_error is None
+
+
+def test_totp_qr_with_short_secret(auth_client, app):
+    app.extensions["dockbare"].settings.totp_secret = "JBSWY3DPEHPK3PXP"
+    r = auth_client.get("/api/security/totp-qr")
+    assert r.status_code == 409 and "too short" in r.get_json()["error"]
+
+
+def test_totp_setup_cli_rejects_short_secret(capsys):
+    import argparse
+
+    from dockbare.__main__ import cmd_totp_setup
+
+    assert cmd_totp_setup(argparse.Namespace(secret="JBSWY3DPEHPK3PXP", user="admin")) == 1
+    assert "too short" in capsys.readouterr().err
+    assert cmd_totp_setup(argparse.Namespace(secret=TOTP_SECRET.lower(), user="admin")) == 0
+    assert f"DOCKBARE_TOTP_SECRET={TOTP_SECRET}" in capsys.readouterr().out

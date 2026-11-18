@@ -27,6 +27,8 @@ services:
       - dockbare_backups:/backups
       - dockbare_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: the host's /proc adds host-wide network traffic to System (everything else works without it).
+      # - /proc:/host/proc:ro
     networks:
       - proxy
     labels:

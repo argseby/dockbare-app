@@ -21,6 +21,26 @@ WEAK_PASSWORDS = {"password", "admin", "dockbare", "changeme", "change-me", "sec
 GLOBAL_FAILURE_LIMIT = 30  # failures from all IPs within the window before every attempt is slowed down
 CSRF_HEADER = "X-Requested-With"
 CSRF_VALUE = "Dockbare"
+TOTP_MIN_BYTES = 14  # 112 bits: the minimum pyotp >= 2.10 accepts (it raises on shorter secrets)
+
+
+def totp_secret_problem(secret: str | None) -> str | None:
+    """Why a base32 TOTP secret is unusable, or None when it is fine."""
+    import base64
+    import binascii
+
+    if not secret:
+        return None
+    s = secret.replace(" ", "").upper().rstrip("=")
+    try:
+        raw = base64.b32decode(s + "=" * (-len(s) % 8))
+    except (binascii.Error, ValueError):
+        return "is not valid base32 (letters A-Z and digits 2-7)"
+    if len(raw) < TOTP_MIN_BYTES:
+        return (f"is too short ({len(raw) * 8} bits, {len(s)} characters); at least {TOTP_MIN_BYTES * 8} bits "
+                f"({-(-TOTP_MIN_BYTES * 8 // 5)} characters) are required. Generate a new one with "
+                "`python -m dockbare totp-setup` and re-add it to your authenticator app")
+    return None
 
 
 class AuthError(Exception):
@@ -81,6 +101,15 @@ class Auth:
     def totp_enabled(self) -> bool:
         return self.totp_secret() is not None
 
+    @property
+    def totp_error(self) -> str | None:
+        """A readable message when the active TOTP secret cannot be used, else None."""
+        problem = totp_secret_problem(self.totp_secret())
+        if not problem:
+            return None
+        where = "DOCKBARE_TOTP_SECRET" if self.totp_source == "env" else "The stored two-factor secret"
+        return f"{where} {problem}."
+
     def _totp(self):
         import pyotp
 
@@ -97,7 +126,11 @@ class Auth:
         code = (code or "").replace(" ", "").replace("-", "").strip()
         sec = secret or self.totp_secret()
         if sec and code.isdigit() and len(code) == 6:
-            if not pyotp.TOTP(sec).verify(code, valid_window=1):
+            try:
+                valid = pyotp.TOTP(sec).verify(code, valid_window=1)
+            except ValueError:  # secret pyotp refuses (too short / not base32); see totp_error
+                return None
+            if not valid:
                 return None
             if secret is None:  # replay protection applies to real logins, not to the setup confirmation
                 last = self.db.get_setting("totp_last_used") or {}
@@ -210,6 +243,9 @@ class Auth:
         # Always run the hash check so timing is identical for unknown users.
         ok_pass = check_password_hash(self._hash if ok_user else self._dummy_hash, password or "")
         ok = ok_user and ok_pass
+        if ok and self.totp_enabled and self.totp_error:
+            # Correct password but no code can ever match: say why instead of counting it as a failed login.
+            raise AuthError(f"Two-factor login is unavailable: {self.totp_error}", 503)
         if ok and self.totp_enabled:
             how = self.verify_code(totp_code or "")
             if how is None:

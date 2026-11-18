@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from typing import Iterable, Iterator
 
 import docker
-from docker.errors import APIError, DockerException, ImageNotFound, NotFound
+from docker.errors import APIError, DockerException, ImageNotFound, InvalidVersion, NotFound
 
 log = logging.getLogger("dockbare.docker")
 
@@ -34,6 +34,67 @@ class DockerError(Exception):
 
 def valid_volume_name(name: str) -> bool:
     return bool(name) and bool(VOLUME_RE.match(name)) and ".." not in name
+
+
+def parse_stats(s: dict) -> dict | None:
+    """Reduce a Docker ``/stats`` payload to the counters Dockbare keeps."""
+    if not isinstance(s, dict):
+        return None
+    cpu = s.get("cpu_stats") or {}
+    usage = cpu.get("cpu_usage") or {}
+    if not usage.get("total_usage") and not cpu.get("system_cpu_usage"):
+        return None  # container not running (all-zero payload)
+    mem = s.get("memory_stats") or {}
+    mstats = mem.get("stats") or {}
+    # Same as `docker stats`: page cache is reclaimable, so it is not counted as used.
+    cache = mstats.get("inactive_file", mstats.get("total_inactive_file", mstats.get("cache", 0))) or 0
+    used = max(0, int(mem.get("usage") or 0) - int(cache))
+    rx = tx = 0
+    for n in (s.get("networks") or {}).values():
+        rx += int(n.get("rx_bytes") or 0)
+        tx += int(n.get("tx_bytes") or 0)
+    br = bw = 0
+    for e in ((s.get("blkio_stats") or {}).get("io_service_bytes_recursive") or []):
+        op = str(e.get("op") or "").lower()
+        if op == "read":
+            br += int(e.get("value") or 0)
+        elif op == "write":
+            bw += int(e.get("value") or 0)
+    return {
+        "cpu_total": int(usage.get("total_usage") or 0),
+        "cpu_system": int(cpu.get("system_cpu_usage") or 0),
+        "cpus": int(cpu.get("online_cpus") or len(usage.get("percpu_usage") or []) or 1),
+        "mem": used,
+        "mem_limit": int(mem.get("limit") or 0),
+        "net_rx": rx, "net_tx": tx, "blk_r": br, "blk_w": bw,
+        "pids": int((s.get("pids_stats") or {}).get("current") or 0),
+    }
+
+
+_LOG_TS = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})\s?")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def parse_log_lines(raw: bytes | str) -> list[tuple[float, str]]:
+    """Split ``docker logs --timestamps`` output into (unix ts, text); ANSI colour codes are removed."""
+    from datetime import datetime
+
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+    out: list[tuple[float, str]] = []
+    for line in text.splitlines():
+        m = _LOG_TS.match(line)
+        if not m:
+            if out:
+                out.append((out[-1][0], _ANSI.sub("", line)))
+            continue
+        tz = "+00:00" if m.group(4) == "Z" else m.group(4)
+        frac = (m.group(3) or "0")[:6].ljust(6, "0")
+        try:
+            ts = datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{tz}").timestamp()
+        except ValueError:
+            ts = out[-1][0] if out else 0.0
+        out.append((ts, _ANSI.sub("", line[m.end():])))
+    return out
 
 
 class DockerCtl:
@@ -69,6 +130,15 @@ class DockerCtl:
             return {"ok": True, "version": v.get("Version"), "api": v.get("ApiVersion"), "os": v.get("Os")}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def host_info(self) -> dict:
+        """CPU count, total memory and name of the Docker host (from ``/info``)."""
+        try:
+            i = self.client.info()
+        except DockerException as e:
+            raise DockerError(f"Cannot read Docker info: {e}") from e
+        return {"cpus": int(i.get("NCPU") or 0), "mem_total": int(i.get("MemTotal") or 0), "name": i.get("Name") or "",
+                "os": i.get("OperatingSystem") or "", "kernel": i.get("KernelVersion") or ""}
 
     # --- volumes & containers ------------------------------------------------
     def container_map(self) -> dict[str, list[dict]]:
@@ -210,6 +280,38 @@ class DockerCtl:
             "health": ((st.get("Health") or {}).get("Status")), "restart_policy": ((a.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name"),
             "health_log": [(h.get("End"), h.get("ExitCode"), (h.get("Output") or "")[:300]) for h in ((st.get("Health") or {}).get("Log") or [])[-3:]],
         }
+
+    def container_stats(self, cid: str) -> dict | None:
+        """Raw resource counters of a running container (one ``/stats`` call, no streaming).
+
+        ``one_shot`` makes the daemon answer at once instead of waiting ~1 s for a second
+        sample; rates are computed by the caller from two consecutive calls.
+        """
+        try:
+            try:
+                s = self.client.api.stats(cid, stream=False, one_shot=True)
+            except NotFound:
+                raise
+            except (TypeError, APIError, InvalidVersion):  # old SDK or daemon without one_shot (API < 1.41)
+                s = self.client.api.stats(cid, stream=False)
+        except NotFound:
+            return None
+        except DockerException as e:
+            raise DockerError(f"Cannot read container stats: {e}") from e
+        return parse_stats(s)
+
+    def container_logs(self, cid: str, *, tail: int | str = 500, since: float | None = None) -> list[tuple[float, str]]:
+        """Log lines (stdout and stderr merged) as (unix timestamp, text), oldest first."""
+        kw: dict = {"stdout": True, "stderr": True, "timestamps": True, "tail": tail}
+        if since:
+            kw["since"] = int(since)  # whole seconds; callers drop lines they already saw by timestamp
+        try:
+            raw = self.client.api.logs(cid, **kw)
+        except NotFound:
+            return []
+        except DockerException as e:
+            raise DockerError(f"Cannot read container logs: {e}") from e
+        return parse_log_lines(raw)
 
     def restart_container(self, cid: str, timeout: int = 10) -> bool:
         try:

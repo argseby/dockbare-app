@@ -18,6 +18,8 @@ from .dockerctl import DockerCtl
 from .manager import Manager
 from .peers import Peers
 from .uptime import Uptime
+from .metrics import Metrics
+from .alerts import Alerts
 from .configsync import ConfigSync
 from .recovery import Recovery
 from .reports import Reports
@@ -86,6 +88,11 @@ class Core:
         self.manager.peers = self.peers
         self.uptime = Uptime(self.manager)
         self.manager.uptime = self.uptime
+        self.metrics = Metrics(self.manager)
+        self.manager.metrics = self.metrics
+        self.alerts = Alerts(self.manager)
+        self.manager.alerts = self.alerts
+        self.metrics.listeners.append(self.alerts.evaluate)
         self.configsync = ConfigSync(self.manager)
         self.manager.configsync = self.configsync
         self.auth = Auth(settings, self.db, on_event=self.manager.event, notify=self.manager.notifier.notify, secretbox=self.secretbox)
@@ -101,16 +108,21 @@ class Core:
         log.info("Dockbare %s build %s starting (data=%s, backups=%s)", __version__, build_id(), self.settings.data_dir, self.settings.backup_dir)
         if not self.auth.configured:
             log.error("No admin password configured! Set DOCKBARE_ADMIN_PASSWORD (or _HASH) in .env. All access is blocked until then.")
+        if self.auth.totp_error:
+            log.error("%s Logins are blocked until it is fixed.", self.auth.totp_error)
         if not self.keyring.available:
             log.warning("No DOCKBARE_ENCRYPTION_KEY set: backups will be stored and uploaded unencrypted.")
         self.manager.start()
         self.reports.install_jobs()
         self.peers.install_job()
         self.uptime.start(background=not self.settings.testing)
+        self.alerts.seed()
+        self.metrics.start(background=not self.settings.testing)
         self.configsync.install_job()
 
     def stop(self) -> None:
         self.configsync.stop()
+        self.metrics.stop()
         self.uptime.stop()
         self.manager.stop()
         self.tasks.shutdown()

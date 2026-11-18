@@ -676,3 +676,57 @@ i.ub-ok { background: #16a34a; } i.ub-warn { background: #f59e0b; } i.ub-bad { b
 .st-day { scroll-margin-top: 16px; }
 .st-day.flash h3 { animation: day-flash 1.6s ease-out; }
 @keyframes day-flash { 0%, 40% { color: var(--primary); } 100% { color: inherit; } }
+
+/* system / metrics charts */
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid-l { stroke: var(--border); stroke-width: 1; }
+.chart .ax { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+.chart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .ln.dash { stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart .ar { stroke: none; opacity: .12; }
+.chart .cross { stroke: var(--border-strong); stroke-width: 1; }
+.chart .bk-band { fill: var(--primary); opacity: .07; }
+.chart .bk-band.bad { fill: var(--danger); opacity: .12; }
+.s1 { --c: var(--primary); } .s2 { --c: #eb6834; } .s3 { --c: #1baf7a; } .lim { --c: var(--danger); } .bk { --c: var(--primary); }
+html[data-theme="dark"] .s2 { --c: #f08254; } html[data-theme="dark"] .s3 { --c: #2bc48c; }
+.chart .ln { stroke: var(--c); } .chart .ar { fill: var(--c); } .chart .pt { fill: var(--c); }
+.chart-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 6px 9px; font-size: 12px; white-space: nowrap; }
+.chart-tip b { font-weight: 600; margin-left: 4px; }
+.chart-h { margin-bottom: 6px; font-size: 13px; }
+.chart-legend { display: inline-flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+.chart-legend > span, .chart-tip div { display: inline-flex; align-items: center; gap: 5px; }
+.chart-tip div { display: flex; }
+.sw { display: inline-block; width: 12px; height: 0; border-top: 2px solid var(--c); flex: none; }
+.sw.dash { border-top-style: dashed; }
+.sw.bk { height: 10px; border: 0; border-radius: 2px; background: var(--primary); opacity: .25; }
+.mini-spark { display: block; }
+.mini-spark polyline { fill: none; stroke: var(--primary); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.metrics-table td.num, .metrics-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.metrics-table .mem-cell { min-width: 140px; }
+.metrics-table tr.clickable { cursor: pointer; }
+.metrics-table tr.clickable:focus-visible td { background: var(--surface-2); outline: none; }
+.mbar { height: 5px; border-radius: 3px; background: var(--surface-3); margin-top: 4px; overflow: hidden; }
+.mbar i { display: block; height: 100%; width: 0; background: var(--primary); border-radius: 3px; }
+.mbar i.warn { background: var(--warning); } .mbar i.bad { background: var(--danger); }
+.icon.flip { transform: scaleX(-1); }
+.inc-ctx { margin-top: 6px; font-size: 12.5px; }
+.inc-ctx summary { cursor: pointer; color: var(--text-2); display: flex; align-items: center; gap: 6px; list-style: none; }
+.inc-ctx summary::-webkit-details-marker { display: none; }
+.inc-ctx .log { margin-top: 6px; max-height: 260px; }
+.st-host { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.st-host-bit { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); white-space: nowrap; }
+.st-host-bit.warn { background: var(--warning-soft); color: var(--warning-text); }
+.st-host-bit.bad { background: var(--danger-soft); color: var(--danger-text); }
+.stat .value.danger, .stat .sub .danger { color: var(--danger); }
+.stat .value.warn { color: var(--warning); }
+.logview { font-family: var(--mono); font-size: 12px; line-height: 1.55; max-height: 520px; min-height: 120px; overflow: auto; padding: 10px 12px; background: var(--surface-2); white-space: pre-wrap; word-break: break-word; }
+.logview .ll { padding: 0 2px; }
+.logview .ll.error { color: var(--danger); background: var(--danger-soft); }
+html[data-theme="dark"] .logview .ll.error { color: var(--danger-text); }
+.logview .ll.warn { color: var(--warning-text); background: var(--warning-soft); }
+.logview .lt { color: var(--muted); margin-right: 10px; user-select: none; }
+[data-logs] .search input { height: 30px; width: 200px; font-size: 12.5px; }
+[data-logs] .card-h { flex-wrap: wrap; }
+[data-logs] .card-h h2 { white-space: nowrap; }
+[data-logs] [data-logcount] { white-space: nowrap; }

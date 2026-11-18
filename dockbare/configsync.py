@@ -30,6 +30,7 @@ TRIGGER_KINDS = {
     "schedule.saved", "schedule.deleted", "schedule.toggled", "remote.created", "remote.updated", "remote.deleted",
     "settings.saved", "settings.instance_renamed", "peer.created", "peer.updated", "peer.deleted", "peer.token_regenerated",
     "uptime.monitor_saved", "uptime.check_saved", "uptime.check_deleted", "uptime.service_saved", "uptime.service_deleted",
+    "metrics.rule_saved", "metrics.rule_deleted",
 }
 
 
@@ -76,6 +77,8 @@ class ConfigSync:
             "checks": m.uptime.checks() if m.uptime else [],
             "services": m.uptime.services() if m.uptime else [],
             "uptime": m.uptime.settings() if m.uptime else None,
+            "metrics": m.metrics.settings() if getattr(m, "metrics", None) else None,
+            "alert_rules": m.alerts.rules() if getattr(m, "alerts", None) else [],
             "totp": ({"secret": m.auth.totp_secret(), "recovery": m.db.get_setting("totp_recovery") or []}
                      if (include_secrets and getattr(m, "auth", None) and m.auth.totp_source == "ui") else None),
         }
@@ -113,7 +116,7 @@ class ConfigSync:
     def apply(self, doc: dict, *, sections: list[str] | None = None) -> dict:
         """Import a snapshot. Rows configured through .env are never touched."""
         m = self.m
-        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime", "totp"])
+        want = set(sections or ["general", "remotes", "schedules", "notifications", "reports", "peers", "monitors", "uptime", "metrics", "alert_rules", "totp"])
         summary: dict = {}
         if "remotes" in want:
             n = 0
@@ -177,6 +180,20 @@ class ConfigSync:
         if "uptime" in want and m.uptime and isinstance(doc.get("uptime"), dict):
             m.uptime.save_settings(doc["uptime"])
             summary["uptime"] = True
+        if "metrics" in want and getattr(m, "metrics", None) and isinstance(doc.get("metrics"), dict):
+            m.metrics.save_settings(doc["metrics"])
+            summary["metrics"] = True
+        if "alert_rules" in want and getattr(m, "alerts", None) and isinstance(doc.get("alert_rules"), list):
+            n = 0
+            for r in doc["alert_rules"]:
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    m.alerts.save(r, r.get("id"), create=True, quiet=True)
+                    n += 1
+                except ManagerError as e:
+                    log.warning("Skipped alert rule %s: %s", r.get("name"), e)
+            summary["alert_rules"] = n
         if "totp" in want and isinstance(doc.get("totp"), dict) and doc["totp"].get("secret") and getattr(m, "auth", None) and m.auth.totp_source != "env":
             m.db.set_setting("totp_secret", m.secretbox.encrypt(doc["totp"]["secret"]))
             m.db.set_setting("totp_recovery", list(doc["totp"].get("recovery") or []))

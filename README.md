@@ -27,6 +27,17 @@ promises, no roadmap, use it at your own risk. Issues and PRs are welcome anyway
 - **Uptime**: every container's state, health check, exit code and OOM flag straight from the Docker
   socket, with incidents, per-container rules (notify, auto-restart with a budget, require healthy,
   grace period) and an optional public status page at `/` (the app itself lives under `/admin`) that also shows your peers.
+- **System**: host CPU, load, memory, disk I/O, temperature and disk space (with a "full in N days"
+  forecast), plus CPU, memory, network, disk I/O and processes of every container, straight from
+  `/proc` and the Docker socket. History for 90 days (raw for 24 h, then 5-minute and hourly averages),
+  backup runs marked on the charts, and a live log viewer per container with filter, follow and download.
+  No agent needed; mount the host's `/proc` at `/host/proc` (read-only) if you also want host network traffic.
+- **Alerts**: rules like "disk used > 90 % for 15 min", "disk full within 7 days", "container memory
+  > 90 % of its limit" or "more than 5 log lines matching `panic|fatal` in 5 minutes", sent through the
+  same notification channels, with repeat, resolve messages, maintenance windows and quiet hours.
+  When a container goes down, its last log lines and last memory reading are kept with the incident;
+  the log lines go into the notification only if you switch that on (logs can contain secrets). Peers show each other's load, and the public status page can
+  show CPU, memory and disk if you turn it on.
 - **Config snapshot**: everything that isn't in `.env` (schedules, remotes, channels, peers, monitors,
   report/uptime settings) is encrypted with the backup key and pushed to every remote whenever it changes.
   Recovery imports it with one click.
@@ -77,7 +88,7 @@ Everything that matters for a reinstall lives in `.env`, so disaster recovery is
 | Variable | Description |
 |---|---|
 | `DOCKBARE_ADMIN_USER` / `DOCKBARE_ADMIN_PASSWORD` | Login. Required; everything is blocked without it. `DOCKBARE_ADMIN_PASSWORD_HASH` works too (`python -m dockbare hash-password`). |
-| `DOCKBARE_TOTP_SECRET` | Optional second factor (`python -m dockbare totp-setup`). |
+| `DOCKBARE_TOTP_SECRET` | Optional second factor (`python -m dockbare totp-setup`). Base32, at least 112 bits (23 characters; `totp-setup` makes 32). Shorter secrets block login with an explanation. |
 | `DOCKBARE_SECRET_KEY` | Signs sessions, encrypts stored passwords. Generated into `/data` if missing, but set it. |
 | `DOCKBARE_ENCRYPTION_KEY` | The backup encryption key. |
 | `DOCKBARE_INSTANCE_NAME` | Name of this installation, used as folder on shared remotes and shown to peers. |
@@ -88,6 +99,7 @@ Everything that matters for a reinstall lives in `.env`, so disaster recovery is
 | `DOCKBARE_BEHIND_PROXY`, `DOCKBARE_SECURE_COOKIES` | `true` behind a reverse proxy; cookie flag `auto`/`true`/`false`. |
 | `DOCKBARE_SESSION_*`, `DOCKBARE_LOGIN_*` | Session lifetime and login throttling. |
 | `DOCKBARE_HELPER_IMAGE` | Image for the helper containers (default: the Dockbare image itself). |
+| `DOCKBARE_HOST_PROC`, `DOCKBARE_HOST_DISKS` | System page: host `/proc` location (default `/host/proc` when mounted, else `/proc`) and extra paths whose filesystems are listed under Disks. |
 | `DOCKBARE_PORT`, `DOCKBARE_LISTEN` | Port and bind address inside the container (5000 / 0.0.0.0). `DOCKBARE_HOST` is the public host name used only by the compose/Traefik labels. |
 | `TZ` | Time zone for schedules and reports. |
 

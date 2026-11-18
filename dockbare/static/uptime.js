@@ -74,6 +74,14 @@ async function load() {
   lastData = d;
   render(d);
 }
+// Host load of a site, when its admin chose to publish it (Dockbare → System → Collection).
+function hostHealth(h) {
+  if (!h || h.cpu == null) return "";
+  const cls = (v, warn, bad) => (v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "ok");
+  const bit = (label, v, warn, bad, unit = "%") => (v == null ? "" : `<span class="st-host-bit ${cls(v, warn, bad)}" title="${esc(label)}">${esc(label)} ${Math.round(v)}${unit}</span>`);
+  return `<span class="st-host">${bit("CPU", h.cpu, 80, 95)}${bit("Memory", h.mem_pct, 85, 95)}${bit("Disk", h.disk_pct, 85, 95)}${bit("Temp", h.temp, 75, 90, " °C")}</span>`;
+}
+
 function render(d) {
   document.title = d.title; $("#title").textContent = d.title;
   const items = d.groups.flatMap((g) => g.items.map((i) => ({ ...i, group: g.name })));
@@ -104,7 +112,7 @@ function render(d) {
   const [, , long, count, unit] = winDef();
   $("#overview").innerHTML = items.length ? `<div class="st-section"><div class="st-overview"><div class="st-section-h"><h2>${icon("chart", "sm")} Last ${long}</h2>${seg}</div><div class="ov-pct" title="${long} availability, all services">${pct(avgPct(items, win))}</div>${hists.length ? `${historyBars(combine(hists), { height: 22 })}${axis(count, unit)}${legend()}` : ""}</div></div>` : "";
   const groupName = (g) => g.name;
-  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}<span class="muted">${g.items.length ? `<span title="${winLong()} availability">${icon("activity", "sm")} ${pct(avgPct(g.items, win))}</span>` : ""}${g.checked_at ? ` · <span title="refreshed from this site">${icon("refresh", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}${g.merged ? (d.unreachable || []).map((n) => `<div class="st-svc is-off"><div class="row"><span class="dot off"></span>${icon("globe", "sm")}<b class="name">${esc(n)}</b><span class="badge danger">${icon("x", "sm")} unreachable</span><span class="stats">no data while unreachable</span></div></div>`).join("") : ""}</div>`).join("")}</div>`;
+  $("#groups").innerHTML = `<div class="st-section">${d.groups.map((g) => `<div class="st-group"><div class="st-group-h"><h2>${icon(g.self ? "server" : "globe", "sm")} ${esc(groupName(g))}</h2>${g.self ? "" : `<span class="badge ${g.online ? "ok" : "danger"}">${icon(g.online ? "check" : "x", "sm")} ${g.online ? "online" : "unreachable"}</span>`}${hostHealth(g.host)}<span class="muted">${g.items.length ? `<span title="${winLong()} availability">${icon("activity", "sm")} ${pct(avgPct(g.items, win))}</span>` : ""}${g.checked_at ? ` · <span title="refreshed from this site">${icon("refresh", "sm")} ${esc(ago(g.checked_at))}</span>` : ""}</span></div>${g.items.length ? g.items.map(service).join("") : `<div class="st-empty">${g.online ? "No public services listed." : "No data while unreachable."}</div>`}${g.merged ? (d.unreachable || []).map((n) => `<div class="st-svc is-off"><div class="row"><span class="dot off"></span>${icon("globe", "sm")}<b class="name">${esc(n)}</b><span class="badge danger">${icon("x", "sm")} unreachable</span><span class="stats">no data while unreachable</span></div></div>`).join("") : ""}</div>`).join("")}</div>`;
   const hist = [...(d.announcements || []).map((a) => ({ name: a.title, kind: a.type === "incident" ? `${a.severity || ""} incident`.trim() : "maintenance", cls: a.type === "incident" ? (a.severity === "major" ? "bad" : "warn") : "info", started_at: a.starts_at, ended_at: a.resolved_at || a.ends_at, duration: (a.resolved_at || a.ends_at || Date.now() / 1000) - a.starts_at, message: a.message, updates: a.updates })),
     ...(d.incidents || []).map((i) => ({ ...i, cls: i.ended_at ? "ok" : "bad" }))].sort((a, b) => b.started_at - a.started_at);
   const days = new Map();

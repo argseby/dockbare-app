@@ -33,6 +33,9 @@ dockbare/
   tasks.py       background task registry with progress + per-task log
   notify.py      ntfy, SMTP email, webhook channels
   reports.py     periodic report generation + delivery
+  metrics.py     resource metrics: collector, rollups, forecast, read API
+  hostmetrics.py host metrics from /proc and /sys
+  alerts.py      alert rules on metrics and container logs
   recovery.py    remote scan, local comparison, restore plan execution
   manager.py     orchestration: backups, uploads, sync, schedules, prune, restore
   auth.py        login, sessions, throttling, TOTP, CSRF, security headers
@@ -111,6 +114,70 @@ they cover. The public payload carries per-service 90-day daily availability
 (`daily_history`, from incident overlap per UTC day, `None` before the container
 was first seen) and the announcements; peers forward their public items and
 announcements in `/api/peer/status`.
+
+### Resource metrics (`metrics.py`, `hostmetrics.py`)
+
+A collector thread (default every 30 s, 10–300 configurable) samples three things:
+
+* **Containers:** `GET /containers/{id}/stats?stream=false&one_shot=true` for every running
+  container in a small thread pool (`one_shot` answers at once; older daemons fall back to the
+  plain call). CPU % is `Δcontainer / Δsystem × online CPUs × 100` (100 = one core, like
+  `docker stats`), memory is usage minus `inactive_file` (cgroup v2) or `cache` (v1), network
+  (all interfaces) and block I/O are bytes per second, plus PIDs.
+* **Host:** `hostmetrics.HostReader` parses `/proc/stat`, `meminfo`, `loadavg` and `diskstats`
+  (whole disks only, no partitions or loop devices) and the hottest sensor under
+  `/sys/class/hwmon` / `thermal`. Those files are host-wide even inside a container. Network is
+  per namespace, so host traffic is read from `<host proc>/1/net/dev` only when the host's `/proc`
+  is mounted (`DOCKBARE_HOST_PROC`, default `/host/proc` when present); without it the UI shows
+  the containers' sum.
+* **Disks:** `statvfs` of the data and backup directories and `DOCKBARE_HOST_DISKS`, one row per
+  distinct filesystem; the percentage is computed like `df` (used / (used + available)).
+
+Docker and /proc report cumulative counters, so each sample is the difference to the previous
+reading; the first reading after start and readings across a counter reset (restart, recreate,
+reboot) are skipped. Tables `container_samples`, `host_samples` and `disk_samples` carry a `res`
+column: raw rows (`res = 0`, kept 24 h), 5-minute rollups (`300`, kept 7 days) and hourly rollups
+(`3600`, kept 90 days), each with averages plus `*_max` peaks. A rollup pass every minute
+aggregates finished buckets (raw → 5 min → 1 h). Reads pick the resolution by range (≤ 24 h raw,
+≤ 7 d 5-minute, else hourly), add the raw tail that is not rolled up yet, and downsample in SQL
+to ~120 points. The disk forecast is a least-squares line through the last 7 days of used space
+("full in N days" once at least 6 hours of samples exist). Backup runs from the event log are
+returned as spans for chart markers.
+
+### Alerts (`alerts.py`)
+
+Rules (`alert_rules`, JSON config) compare one metric with a threshold: host CPU / memory / swap /
+load / temperature, disk used % / days until full, container CPU / memory (% of its limit, else of
+host RAM, or MiB), or the number of log lines matching a regex within a window. They run after every
+collection. A condition that holds for `for_minutes` fires: `metrics.alert` event and a
+notification on the `metrics` event channel; `repeat_minutes` re-sends while firing; the alert
+resolves (`metrics.resolved`, optional message) when the condition stops holding or the target
+really disappears. A target without a value (e.g. the first round after a restart) keeps its state.
+State lives in `alert_state`, so it survives restarts. Maintenance windows from the uptime page
+suppress container rules for the containers they cover; quiet hours (either mode) hold the
+notification back until they end. Switching metrics collection off clears all alert state. Log rules only fetch lines since the last evaluation
+(`docker logs --since`, at most 5000 lines per round) and keep per-container hit counts in memory.
+Three rules are created once on a fresh install (disk > 90 %, disk full within 7 days, host memory
+> 95 %). Rules are part of the configuration snapshot.
+
+### Logs and incident context
+
+`GET /api/logs/<container>` returns `docker logs --timestamps` lines (stdout and stderr merged,
+ANSI codes removed), `since` for incremental polling (the UI follows by polling every 3 s) and
+`download=1` for a text file. When uptime opens an incident it stores the last 30 log lines and the
+container's last resource sample in the incident detail. The "down" notification always includes
+the sample and, only with the metrics setting `notify_logs` (off by default, since logs can hold
+secrets and notifications may go to a third-party server such as ntfy.sh), the last 5 lines.
+`/api/uptime` drops the stored lines from all but the 40 newest incidents to keep the payload small.
+
+### Peers, status page, reports
+
+`/api/peer/status` includes a metrics summary (CPU, memory, worst disk, forecast, firing alerts);
+firing alerts also count as peer problems. The public status page shows CPU, memory and disk of a
+site only when that site enables it (metrics setting `public_host`). Reports get a resources
+section: host averages and peaks, disks with forecast, top 3 containers by CPU and memory, and the
+alerts fired in the period (which mark the report as having problems).
+The System page (`static/system.js`, charts in `static/charts.js`) shows all of it.
 
 ### Configuration snapshot (`configsync.py`)
 

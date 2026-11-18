@@ -22,7 +22,7 @@ import requests
 
 from . import __version__
 from .dockerctl import DockerError
-from .manager import Manager, ManagerError
+from .manager import Manager, ManagerError, fmt_bytes
 
 log = logging.getLogger("dockbare.uptime")
 
@@ -99,6 +99,8 @@ SETTINGS_DEFAULTS = {
 }
 WINDOWS = {"d1": 86400, "d7": 7 * 86400, "d30": 30 * 86400, "d365": 365 * 86400}
 REPO_URL = "https://github.com/argseby/dockbare-app"
+CONTEXT_LOG_LINES = 30  # log lines stored with an incident
+NOTIFY_LOG_LINES = 5  # of those, the last few go into the "down" notification
 HISTORY_DAYS_PUBLIC = 365  # daily bars on the status page (the page shows the selected window of it)
 HISTORY_HOURS_PUBLIC = 24  # hourly bars for the 24 h window
 HISTORY_DAYS_INTERNAL = 30
@@ -464,8 +466,28 @@ class Uptime:
             bits.append("health check: " + detail["health"])
         return "; ".join(bits) or detail.get("kind", "")
 
+    def _context(self, c: dict) -> dict:
+        """Last log lines and the last resource sample of a failing container (stored with the incident)."""
+        ctx: dict = {}
+        if c.get("id"):
+            try:
+                lines = self.m.docker.container_logs(c["id"], tail=CONTEXT_LOG_LINES)
+                ctx["logs"] = [self._clean_output(t, 300) for _, t in lines if t.strip()][-CONTEXT_LOG_LINES:]
+            except (DockerError, AttributeError) as e:
+                log.debug("No logs for %s: %s", c.get("name"), e)
+        mt = getattr(self.m, "metrics", None)
+        last = mt.last_seen.get(c.get("name")) if mt else None
+        if last:
+            host_mem = (mt.host() or {}).get("mem_total") or 0
+            limited = bool(last["mem_limit"]) and (not host_mem or last["mem_limit"] < host_mem)  # no limit = Docker reports host RAM
+            ctx["resources"] = {"cpu": last["cpu"], "mem": last["mem"], "mem_limit": last["mem_limit"] if limited else None, "ts": last["ts"]}
+        return ctx
+
     def _open_incident(self, c: dict, kind: str, cfg: dict, now: float, muted: bool = False) -> dict:
         detail = self._detail(c, kind)
+        ctx = self._context(c)
+        if ctx:
+            detail = json.dumps({**json.loads(detail), **ctx})
         started = self._failing_since.get(c["name"], now)
         cur = self.m.db.execute("INSERT INTO incidents(container, kind, started_at, detail, actions, notified_at) VALUES(?,?,?,?,?,?)",
                                 (c["name"], kind, started, detail, "[]", 0 if muted else None))
@@ -504,9 +526,24 @@ class Uptime:
         name = c.get("title") or c["name"]
         kind = inc["kind"]
         delayed = bool(cfg.get("notify_after_minutes"))
-        self.m.notifier.notify("uptime", f"DOWN: {name}", self._down_message(c, kind, inc.get("detail") or "", down_for if delayed else None), "error",
-                               headline=KIND_HEADLINES.get(kind, "Service down"), subject_name=name,
-                               facts=self._facts(c, inc, now))
+        msg = self._down_message(c, kind, inc.get("detail") or "", down_for if delayed else None)
+        facts = self._facts(c, inc, now)
+        # incidents read back from the database carry the parsed detail in "facts" ("detail" is text by then)
+        ctx = inc.get("facts")
+        if not isinstance(ctx, dict):
+            try:
+                ctx = json.loads(inc.get("detail") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                ctx = {}
+        mt = getattr(self.m, "metrics", None)
+        if isinstance(ctx, dict) and ctx.get("resources"):
+            r = ctx["resources"]
+            limit = f" of {_fmt_bytes(r['mem_limit'])}" if r.get("mem_limit") else ""
+            facts.append(("Last sample", f"CPU {r['cpu']:.1f}%, memory {_fmt_bytes(r['mem'])}{limit}"))
+        if isinstance(ctx, dict) and ctx.get("logs") and mt and mt.settings().get("notify_logs"):
+            msg += "\n\nLast log lines:\n" + "\n".join(t[:160] for t in ctx["logs"][-NOTIFY_LOG_LINES:])
+        self.m.notifier.notify("uptime", f"DOWN: {name}", msg, "error",
+                               headline=KIND_HEADLINES.get(kind, "Service down"), subject_name=name, facts=facts)
 
     def _facts(self, c: dict, inc: dict, now: float) -> list[tuple[str, str]]:
         facts = [("Since", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(inc["started_at"]))),
@@ -862,7 +899,9 @@ class Uptime:
         if time.time() - self.last_poll > 60:
             self.poll()
         anns = self.public_announcements()
-        groups = [{"name": self.public_group_name(), "self": True, "online": True, "items": self.public_items(), "announcements": [a for a in anns if a["active"] or a["upcoming"]]}]
+        mt = getattr(self.m, "metrics", None)
+        groups = [{"name": self.public_group_name(), "self": True, "online": True, "items": self.public_items(), "announcements": [a for a in anns if a["active"] or a["upcoming"]],
+                   "host": mt.public_host() if mt else None}]
         if s.get("public_show_peers") and self.m.peers:
             for p in self.m.peers.list():
                 if not p["enabled"]:
@@ -873,7 +912,8 @@ class Uptime:
                 online = not (p["alert_active"] or st.get("ok") is False)
                 groups.append({"name": p.get("display_name") or up_info.get("public_group_name") or p["name"], "self": False, "online": online,
                                "checked_at": st.get("refreshed_at") or st.get("checked_at"),
-                               "items": (up_info.get("public_items") or []) if online else [], "announcements": (up_info.get("announcements") or []) if online else []})
+                               "items": (up_info.get("public_items") or []) if online else [], "announcements": (up_info.get("announcements") or []) if online else [],
+                               "host": _public_host(remote.get("metrics")) if online else None})
         all_items = [i for g in groups for i in g["items"]]
         down = [i for i in all_items if i["status"] == "down"] + [g for g in groups if not g["online"]]
         degraded = [i for i in all_items if i["status"] == "degraded"]
@@ -1408,6 +1448,17 @@ def badge_svg(label: str, message: str, color: str) -> str:
         f'<text x="{lw + mw / 2:.1f}" y="15" fill="#010101" fill-opacity=".3" textLength="{mw - 12}">{em}</text><text x="{lw + mw / 2:.1f}" y="14" textLength="{mw - 12}">{em}</text>'
         '</g></svg>'
     )
+
+
+def _public_host(m: dict | None) -> dict | None:
+    """A peer's host health, only when that peer publishes it itself."""
+    if not isinstance(m, dict) or not m.get("public"):
+        return None
+    return {k: m.get(k) for k in ("cpu", "mem_pct", "disk_pct", "temp")}
+
+
+def _fmt_bytes(n: float | None) -> str:
+    return fmt_bytes(int(n or 0))
 
 
 def _fmt_dur(s: float) -> str:
